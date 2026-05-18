@@ -1,0 +1,39 @@
+# ─────────────────────────────────────────
+# DocSentinel v2 — Backend Dependencies
+# PhRedSec™ | python 3.11
+# ─────────────────────────────────────────
+
+# Web Framework
+fastapi==0.115.5          # The API framework — handles all HTTP routes
+uvicorn==0.32.1           # The server that actually runs FastAPI
+
+# Database
+sqlalchemy==2.0.36        # ORM — lets us write Python instead of raw SQL
+psycopg2-binary==2.9.10   # PostgreSQL driver — connects Python to the DB
+
+# Authentication
+python-jose[cryptography]==3.3.0  # Creates and verifies JWT tokens (login sessions)
+passlib[bcrypt]==1.7.4            # Hashes passwords before storing them
+
+# File Uploads
+python-multipart==0.0.12  # Allows FastAPI to accept file uploads (PDFs, images)
+
+# Document Processing
+pdfplumber==0.11.4        # Extracts text from digital (non-scanned) PDFs
+pytesseract==0.3.13       # OCR engine wrapper — reads text from images/scanned PDFs
+Pillow==11.0.0            # Image processing — used to prep scans before OCR
+
+# AI
+groq==0.12.0              # Groq API client — connects to LLaMA 3.3 70B + Vision
+
+# Cloud Storage
+boto3==1.35.74            # AWS SDK — also works with Cloudflare R2 (S3-compatible)
+
+# Configuration
+python-dotenv==1.0.1      # Reads your .env file into environment variables
+
+# Encryption
+cryptography==43.0.3      # AES-256-GCM encryption for sensitive documents
+
+# Rate Limiting
+slowapi==0.1.9            # Limits how many requests a user can make per minute
