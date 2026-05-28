@@ -24,7 +24,7 @@ pytesseract==0.3.13       # OCR engine wrapper — reads text from images/scanne
 Pillow==11.0.0            # Image processing — used to prep scans before OCR
 
 # AI
-groq==0.12.0              # Groq API client — connects to LLaMA 3.3 70B + Vision
+groq==0.13.0              # Groq API client — connects to LLaMA 3.3 70B + Vision
 
 # Cloud Storage
 boto3==1.35.74            # AWS SDK — also works with Cloudflare R2 (S3-compatible)
