@@ -38,3 +38,4 @@ cryptography==43.0.3      # AES-256-GCM encryption for sensitive documents
 # Rate Limiting
 slowapi==0.1.9            # Limits how many requests a user can make per minute
 pydantic-settings==2.6.1      # Reads config from environment variables
+email-validator==2.2.0
