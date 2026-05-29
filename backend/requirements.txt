@@ -13,7 +13,8 @@ psycopg2-binary==2.9.10   # PostgreSQL driver — connects Python to the DB
 
 # Authentication
 python-jose[cryptography]==3.3.0  # Creates and verifies JWT tokens (login sessions)
-passlib[bcrypt]==1.7.4            # Hashes passwords before storing them
+passlib[bcrypt]==1.7.4
+bcrypt==4.0.1            # Hashes passwords before storing them
 
 # File Uploads
 python-multipart==0.0.12  # Allows FastAPI to accept file uploads (PDFs, images)
