@@ -11,9 +11,29 @@ EXTRACTION_PROMPT = """You are a document intelligence system for Indian busines
 
 Analyze this document and extract structured information.
 
+DOCUMENT TYPE GUIDE — choose the single best match:
+- "invoice": A bill issued to a customer requesting payment for goods/services, usually has an invoice number.
+- "bill": A bill received from a vendor/supplier for goods/services purchased.
+- "receipt": Proof of a completed payment (cash, card, UPI), usually shorter than an invoice.
+- "contract": A legal agreement between two or more parties, has signature blocks or terms/clauses.
+- "payslip": Salary slip showing employee earnings, deductions, and net pay for a pay period.
+- "bank_statement": A list of bank account transactions over a date range.
+- "tax_return": Income tax return (ITR) filings, tax computation summaries, Form 16, or annual tax documents.
+- "gst_return": GST filings such as GSTR-1, GSTR-3B, or GST summary documents.
+- "purchase_order": A document requesting goods/services from a supplier, issued BEFORE payment, usually has a PO number.
+- "credit_note": A document reducing the amount owed (e.g. for returns or corrections).
+- "debit_note": A document increasing the amount owed (e.g. for additional charges).
+- "other": Use only if none of the above genuinely fit.
+
+VENDOR NAME GUIDE — look carefully for:
+- Company letterhead, logo text, or header at the top of the document
+- Lines like "From:", "Issued by:", "Billed by:", "Seller:", "Company Name:"
+- For payslips/tax returns, this may be the employer or filing entity name instead
+- If truly no organization name appears anywhere, only then return null
+
 Return ONLY a valid JSON object with these exact keys:
 {
-  "document_type": "invoice | bill | receipt | contract | payslip | bank_statement | other",
+  "document_type": "invoice | bill | receipt | contract | payslip | bank_statement | tax_return | gst_return | purchase_order | credit_note | debit_note | other",
   "module": "accounts_payable | accounts_receivable | payroll | compliance | general",
   "vendor_name": "string or null",
   "invoice_number": "string or null",
@@ -44,14 +64,8 @@ def _empty_result(method: str) -> dict:
 
 # ── Vision path: for JPG / PNG ─────────────────────────────────────────────
 def _extract_via_vision(file_bytes: bytes, mime_type: str) -> dict:
-    # 1. Encode the raw image bytes as a base64 string.
-    #    Groq Vision expects images in base64 format, not raw bytes.
     image_b64 = base64.b64encode(file_bytes).decode("utf-8")
 
-    # 2. Build the message. Groq Vision uses a "content" list that can
-    #    contain both text and image_url blocks.
-    #    image_url here is a data URI — it embeds the image directly
-    #    in the request instead of pointing to a URL.
     messages = [
         {
             "role": "user",
@@ -74,13 +88,11 @@ def _extract_via_vision(file_bytes: bytes, mime_type: str) -> dict:
         response = client.chat.completions.create(
             model="meta-llama/llama-4-scout-17b-16e-instruct",
             messages=messages,
-            temperature=0.1,   # low temperature = more deterministic output
+            temperature=0.1,
             max_tokens=500,
         )
         result_text = response.choices[0].message.content.strip()
 
-        # 3. Sometimes models wrap JSON in ```json ... ``` fences.
-        #    Strip those out before parsing.
         if result_text.startswith("```"):
             result_text = result_text.split("```")[1]
             if result_text.startswith("json"):
@@ -90,35 +102,30 @@ def _extract_via_vision(file_bytes: bytes, mime_type: str) -> dict:
         result["extraction_method"] = "groq_vision"
         return result
 
-    except json.JSONDecodeError:
+    except json.JSONDecodeError as e:
+        print(f"[VISION JSON ERROR] {e}")
+        print(f"[RAW RESPONSE] {result_text}")
         return _empty_result("groq_vision_parse_failed")
-    except Exception:
+    except Exception as e:
+        print(f"[VISION ERROR] {type(e).__name__}: {e}")
         return _empty_result("groq_vision_error")
 
 
-# ── Text path: for TXT and (eventually) PDF ───────────────────────────────
+# ── Text path: for TXT and PDF ──────────────────────────────────────────
 def _extract_via_text(file_bytes: bytes, filename: str, mime_type: str = "") -> dict:
-    # If it's a PDF, use pdfplumber to extract real text from it.
-    # PDFs are binary files — decoding them as UTF-8 gives garbage.
-    # pdfplumber reads the actual text layer inside the PDF.
     if mime_type == "application/pdf" or filename.lower().endswith(".pdf"):
         try:
             import pdfplumber
             import io
 
-            # io.BytesIO wraps the raw bytes so pdfplumber can read them
-            # as if they were a file on disk — without saving to disk first.
             with pdfplumber.open(io.BytesIO(file_bytes)) as pdf:
-                # Loop through every page and extract text, then join with newlines
                 raw_text = "\n".join(
-                    page.extract_text() or ""   # extract_text() can return None, so 'or ""'
+                    page.extract_text() or ""
                     for page in pdf.pages
                 )
         except Exception:
-            # If pdfplumber fails for any reason, fall back to empty
             raw_text = ""
     else:
-        # For TXT and other text files, plain UTF-8 decode works fine
         raw_text = file_bytes.decode("utf-8", errors="ignore")
 
     if not raw_text.strip():
@@ -132,9 +139,29 @@ Document filename: {filename}
 Document text:
 {raw_text[:3000]}
 
+DOCUMENT TYPE GUIDE — choose the single best match:
+- "invoice": A bill issued to a customer requesting payment for goods/services, usually has an invoice number.
+- "bill": A bill received from a vendor/supplier for goods/services purchased.
+- "receipt": Proof of a completed payment (cash, card, UPI), usually shorter than an invoice.
+- "contract": A legal agreement between two or more parties, has signature blocks or terms/clauses.
+- "payslip": Salary slip showing employee earnings, deductions, and net pay for a pay period.
+- "bank_statement": A list of bank account transactions over a date range.
+- "tax_return": Income tax return (ITR) filings, tax computation summaries, Form 16, or annual tax documents.
+- "gst_return": GST filings such as GSTR-1, GSTR-3B, or GST summary documents.
+- "purchase_order": A document requesting goods/services from a supplier, issued BEFORE payment, usually has a PO number.
+- "credit_note": A document reducing the amount owed (e.g. for returns or corrections).
+- "debit_note": A document increasing the amount owed (e.g. for additional charges).
+- "other": Use only if none of the above genuinely fit.
+
+VENDOR NAME GUIDE — look carefully for:
+- Company letterhead, logo text, or header at the top of the document
+- Lines like "From:", "Issued by:", "Billed by:", "Seller:", "Company Name:"
+- For payslips/tax returns, this may be the employer or filing entity name instead
+- If truly no organization name appears anywhere, only then return null
+
 Return ONLY a valid JSON object with these exact keys:
 {{
-  "document_type": "invoice | bill | receipt | contract | payslip | bank_statement | other",
+  "document_type": "invoice | bill | receipt | contract | payslip | bank_statement | tax_return | gst_return | purchase_order | credit_note | debit_note | other",
   "module": "accounts_payable | accounts_receivable | payroll | compliance | general",
   "vendor_name": "string or null",
   "invoice_number": "string or null",
@@ -156,12 +183,23 @@ Return ONLY the JSON. No explanation. No markdown. No extra text."""
             max_tokens=500,
         )
         result_text = response.choices[0].message.content.strip()
+
+        if result_text.startswith("```"):
+            result_text = result_text.split("```")[1]
+            if result_text.startswith("json"):
+                result_text = result_text[4:]
+            result_text = result_text.strip()
+
         result = json.loads(result_text)
+        result["extraction_method"] = "groq_text"
         return result
 
-    except json.JSONDecodeError:
+    except json.JSONDecodeError as e:
+        print(f"[TEXT JSON ERROR] {e}")
+        print(f"[RAW RESPONSE] {result_text}")
         return _empty_result("groq_text_parse_failed")
-    except Exception:
+    except Exception as e:
+        print(f"[TEXT ERROR] {type(e).__name__}: {e}")
         return _empty_result("error")
 
 # ── Public entry point called from documents.py ───────────────────────────
@@ -169,5 +207,4 @@ def classify_and_extract(file_bytes: bytes, filename: str, mime_type: str) -> di
     if mime_type in ("image/jpeg", "image/jpg", "image/png"):
         return _extract_via_vision(file_bytes, mime_type)
     else:
-        # Pass mime_type so _extract_via_text knows if it's a PDF
         return _extract_via_text(file_bytes, filename, mime_type)

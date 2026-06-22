@@ -187,6 +187,26 @@ def get_stats(
         "recent_documents": recent_data,
     }
 
+@router.delete("/{document_id}")
+def delete_document(
+    document_id: int,
+    db: Session = Depends(get_db),
+    current_user: User = Depends(get_current_user),
+):
+    doc = (
+        db.query(Document)
+        .filter(Document.id == document_id, Document.user_id == current_user.id)
+        .first()
+    )
+    if not doc:
+        raise HTTPException(status_code=404, detail="Document not found.")
+
+    db.delete(doc)
+    current_user.documents_used = max(0, current_user.documents_used - 1)
+    db.commit()
+    return {"message": "Document deleted successfully."}
+
+
 @router.get("/")
 def list_documents(
     db: Session = Depends(get_db),

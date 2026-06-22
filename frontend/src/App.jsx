@@ -12,6 +12,7 @@ import Register from './pages/auth/Register'
 
 // Main Pages
 import Landing from './pages/Landing'
+import DashboardLayout from './layouts/DashboardLayout'
 import Dashboard from './pages/dashboard/Dashboard'
 
 // Module Pages
@@ -40,24 +41,20 @@ export default function App() {
       <Route path="/login" element={<Login />} />
       <Route path="/register" element={<Register />} />
 
-      <Route path="/dashboard" element={<Dashboard />} />
-
-      {/* { Protected}
-      { <Route path="/dashboard" element={
-        <ProtectedRoute><Dashboard /></ProtectedRoute>
-      } /> } */}
-      <Route path="/vault" element={
-        <ProtectedRoute><Vault /></ProtectedRoute>
-      } />
-      <Route path="/invoices" element={
-        <ProtectedRoute><Invoices /></ProtectedRoute>
-      } />
-      <Route path="/contracts" element={
-        <ProtectedRoute><Contracts /></ProtectedRoute>
-      } />
-      <Route path="/hr" element={
-        <ProtectedRoute><HR /></ProtectedRoute>
-      } />
+      {/* Protected — all rendered inside the shared DashboardLayout */}
+      <Route
+        element={
+          <ProtectedRoute>
+            <DashboardLayout />
+          </ProtectedRoute>
+        }
+      >
+        <Route path="/dashboard" element={<Dashboard />} />
+        <Route path="/vault" element={<Vault />} />
+        <Route path="/invoices" element={<Invoices />} />
+        <Route path="/contracts" element={<Contracts />} />
+        <Route path="/hr" element={<HR />} />
+      </Route>
 
       {/* Fallback */}
       <Route path="*" element={<Navigate to="/" replace />} />

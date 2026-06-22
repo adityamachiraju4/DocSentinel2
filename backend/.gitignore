@@ -6,7 +6,7 @@
 uploads/
 
 # Environment variables
-.env
+backend/.env
 
 # Python cache
 __pycache__/

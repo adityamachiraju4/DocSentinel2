@@ -1,43 +1,100 @@
 # ─────────────────────────────────────────
 # DocSentinel v2 — Storage Service
 # PhRedSec™ | services/storage_service.py
+#
+# Files are encrypted with AES-256-GCM BEFORE leaving the server,
+# then stored as ciphertext in Cloudflare R2 (S3-compatible).
+# Nothing is ever written to local disk.
 # ─────────────────────────────────────────
 
+import os
 import uuid
 from pathlib import Path
 
-# The folder where uploaded files will be saved.
-# On Railway this lives inside the container filesystem.
-UPLOAD_DIR = Path("uploads")
-UPLOAD_DIR.mkdir(exist_ok=True)
+import boto3
+from botocore.config import Config
+from cryptography.hazmat.primitives.ciphers.aead import AESGCM
+
+# ── Config from environment (set in Railway, never hardcoded) ──
+R2_ENDPOINT_URL = os.environ["R2_ENDPOINT_URL"]
+R2_ACCESS_KEY_ID = os.environ["R2_ACCESS_KEY_ID"]
+R2_SECRET_ACCESS_KEY = os.environ["R2_SECRET_ACCESS_KEY"]
+R2_BUCKET_NAME = os.environ["R2_BUCKET_NAME"]
+
+# ENCRYPTION_KEY is 64 hex chars = 32 bytes = AES-256
+ENCRYPTION_KEY = bytes.fromhex(os.environ["ENCRYPTION_KEY"])
+
+# AES-GCM standard nonce size is 12 bytes (96 bits)
+_NONCE_SIZE = 12
+
+
+# ── R2 client (S3-compatible) ──
+# region_name="auto" is what Cloudflare R2 expects.
+def _r2_client():
+    return boto3.client(
+        "s3",
+        endpoint_url=R2_ENDPOINT_URL,
+        aws_access_key_id=R2_ACCESS_KEY_ID,
+        aws_secret_access_key=R2_SECRET_ACCESS_KEY,
+        region_name="auto",
+        config=Config(signature_version="s3v4"),
+    )
+
+
+def _encrypt(plaintext: bytes) -> bytes:
+    """
+    Encrypt bytes with AES-256-GCM.
+    Output layout: [12-byte nonce][ciphertext + 16-byte auth tag].
+    The nonce is random per file and stored alongside the ciphertext.
+    """
+    aesgcm = AESGCM(ENCRYPTION_KEY)
+    nonce = os.urandom(_NONCE_SIZE)
+    ciphertext = aesgcm.encrypt(nonce, plaintext, None)
+    return nonce + ciphertext
+
+
+def _decrypt(blob: bytes) -> bytes:
+    """
+    Reverse of _encrypt: split off the nonce, then decrypt + verify the tag.
+    Raises if the data was tampered with or the key is wrong.
+    """
+    aesgcm = AESGCM(ENCRYPTION_KEY)
+    nonce, ciphertext = blob[:_NONCE_SIZE], blob[_NONCE_SIZE:]
+    return aesgcm.decrypt(nonce, ciphertext, None)
 
 
 def save_file(file_bytes: bytes, original_filename: str) -> str:
     """
-    Save raw file bytes to disk.
-    Returns the storage_key (unique filename) — this is what we store in the DB.
+    Encrypt the file, upload the ciphertext to R2, and return the storage_key
+    (the object key we store in the DB). Same signature as before.
     """
-    # Generate a unique 8-char prefix so no two files ever clash
     unique_id = str(uuid.uuid4())[:8]
-
-    # Grab the file extension e.g. ".pdf", ".png", ".jpg"
     extension = Path(original_filename).suffix
+    storage_key = f"{unique_id}{extension}"
 
-    # Final filename e.g. "a3f9c1d2-invoice.pdf"
-    storage_key = f"{unique_id}-{original_filename}"
+    encrypted = _encrypt(file_bytes)
 
-    # Write the bytes to disk
-    file_path = UPLOAD_DIR / storage_key
-    with open(file_path, "wb") as f:
-        f.write(file_bytes)
+    _r2_client().put_object(
+        Bucket=R2_BUCKET_NAME,
+        Key=storage_key,
+        Body=encrypted,
+        ContentType="application/octet-stream",  # always opaque ciphertext
+    )
 
     return storage_key
 
 
+def get_file(storage_key: str) -> bytes:
+    """
+    Download the ciphertext from R2 and return the decrypted original bytes.
+    """
+    obj = _r2_client().get_object(Bucket=R2_BUCKET_NAME, Key=storage_key)
+    encrypted = obj["Body"].read()
+    return _decrypt(encrypted)
+
+
 def delete_file(storage_key: str) -> None:
     """
-    Delete a file from disk by its storage key.
+    Delete an object from R2 by its storage key.
     """
-    file_path = UPLOAD_DIR / storage_key
-    if file_path.exists():
-        file_path.unlink()
+    _r2_client().delete_object(Bucket=R2_BUCKET_NAME, Key=storage_key)

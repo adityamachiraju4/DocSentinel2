@@ -2,46 +2,151 @@
 // DocSentinel v2 — Login Page
 // PhRedSec™ | Login.jsx
 // ─────────────────────────────────────────
-import { useState } from 'react'
+import { useState, useEffect, useRef } from 'react'
 import { Link, useNavigate } from 'react-router-dom'
 import { Helmet } from 'react-helmet-async'
 import { useAuth } from '../../hooks/useAuth.jsx'
 
 const API = import.meta.env.VITE_API_URL || 'http://127.0.0.1:8000'
 
+const T = {
+  bg: { base: '#07080A', panel: '#0B0C0F', card: '#0F1014' },
+  border: { hairline: 'rgba(255,255,255,0.07)', strong: 'rgba(255,255,255,0.14)' },
+  text: { primary: '#F5F6F7', secondary: '#BDC1C8', muted: '#858992', faint: '#5B5F66' },
+  accent: { violet: '#7C5CFF', bright: '#9B82FF' },
+  semantic: { success: '#3FB950', error: '#F85149' },
+  font: { sans: "'Inter', sans-serif", mono: "'JetBrains Mono', monospace" },
+}
+
+const EXTRACT_FIELDS = [
+  { key: 'VENDOR', value: 'Clicktech Retail Pvt Ltd' },
+  { key: 'GSTIN', value: '29AABCT1332L1ZT' },
+  { key: 'INVOICE NO', value: 'INV-2026-00471' },
+  { key: 'HSN', value: '8471 · 9403' },
+  { key: 'TOTAL', value: '₹9,55,729.00' },
+]
+
+const REDUCE = typeof window !== 'undefined' && window.matchMedia('(prefers-reduced-motion: reduce)').matches
+
+// One field row that types its value in, char by char
+function ExtractRow({ field, active, done, last }) {
+  const [typed, setTyped] = useState('')
+
+  useEffect(() => {
+    if (!active && !done) { setTyped(''); return }
+    if (done && !active) { setTyped(field.value); return }
+    if (REDUCE) { setTyped(field.value); return }
+    setTyped('')
+    let i = 0
+    const id = setInterval(() => {
+      i += 1
+      setTyped(field.value.slice(0, i))
+      if (i >= field.value.length) clearInterval(id)
+    }, 38)
+    return () => clearInterval(id)
+  }, [active, done, field.value])
+
+  const filled = active || done
+  return (
+    <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', padding: '10px 0', borderBottom: last ? 'none' : `1px solid ${T.border.hairline}` }}>
+      <span style={{ fontFamily: T.font.mono, fontSize: 10, color: T.text.faint, letterSpacing: '0.1em' }}>{field.key}</span>
+      <span style={{
+        fontFamily: T.font.mono, fontSize: 12, fontWeight: 500,
+        color: filled ? T.text.primary : T.text.faint,
+        background: filled ? 'transparent' : 'rgba(255,255,255,0.03)',
+        borderRadius: 4, padding: filled ? 0 : '2px 8px', textAlign: 'right',
+        minWidth: filled ? 0 : 90, transition: 'color 0.2s, background 0.2s',
+      }}>
+        {filled ? (
+          <>
+            {typed}
+            {active && typed.length < field.value.length && <span className="ds-caret">▋</span>}
+          </>
+        ) : '— — —'}
+      </span>
+    </div>
+  )
+}
+
+function ExtractionDemo() {
+  const [active, setActive] = useState(-1)   // index currently typing
+  const [doneTo, setDoneTo] = useState(-1)   // fields fully revealed up to
+  const [scanning, setScanning] = useState(true)
+
+  useEffect(() => {
+    if (REDUCE) { setDoneTo(EXTRACT_FIELDS.length - 1); setScanning(false); return }
+    let idx = 0
+    let timer
+    const step = () => {
+      if (idx >= EXTRACT_FIELDS.length) {
+        setActive(-1); setScanning(false)
+        timer = setTimeout(() => { setDoneTo(-1); idx = 0; setScanning(true); step() }, 2000)
+        return
+      }
+      setActive(idx)
+      const dwell = 38 * EXTRACT_FIELDS[idx].value.length + 520
+      timer = setTimeout(() => {
+        setDoneTo(idx); idx += 1; step()
+      }, dwell)
+    }
+    step()
+    return () => clearTimeout(timer)
+  }, [])
+
+  return (
+    <div style={{ position: 'relative', border: `1px solid ${T.border.hairline}`, borderRadius: 12, background: T.bg.card, overflow: 'hidden' }}>
+      <div style={{ display: 'flex', alignItems: 'center', gap: 8, padding: '11px 14px', borderBottom: `1px solid ${T.border.hairline}` }}>
+        <span style={{ width: 9, height: 9, borderRadius: '50%', background: 'rgba(255,255,255,0.12)' }} />
+        <span style={{ width: 9, height: 9, borderRadius: '50%', background: 'rgba(255,255,255,0.12)' }} />
+        <span style={{ width: 9, height: 9, borderRadius: '50%', background: 'rgba(255,255,255,0.12)' }} />
+        <span style={{ marginLeft: 8, fontFamily: T.font.mono, fontSize: 10, color: T.text.faint, letterSpacing: '0.08em' }}>extracting · invoice.pdf</span>
+        <span style={{ marginLeft: 'auto', display: 'flex', alignItems: 'center', gap: 6 }}>
+          <span style={{ width: 6, height: 6, borderRadius: '50%', background: scanning ? T.accent.bright : T.semantic.success, boxShadow: scanning ? `0 0 8px ${T.accent.bright}` : 'none' }} />
+          <span style={{ fontFamily: T.font.mono, fontSize: 10, color: scanning ? T.accent.bright : T.semantic.success }}>{scanning ? 'READING' : 'DONE'}</span>
+        </span>
+      </div>
+
+      <div style={{ position: 'relative', padding: '18px 16px', minHeight: 220 }}>
+        {scanning && <div className="ds-scan" style={{ position: 'absolute', left: 0, right: 0, height: 2, background: `linear-gradient(90deg, transparent, ${T.accent.violet}, transparent)`, boxShadow: `0 0 12px ${T.accent.violet}` }} />}
+        {EXTRACT_FIELDS.map((f, i) => (
+          <ExtractRow key={f.key} field={f} active={active === i} done={i <= doneTo} last={i === EXTRACT_FIELDS.length - 1} />
+        ))}
+      </div>
+    </div>
+  )
+}
+
 export default function Login() {
   const { login } = useAuth()
   const navigate = useNavigate()
-
   const [form, setForm] = useState({ email: '', password: '' })
   const [error, setError] = useState('')
   const [loading, setLoading] = useState(false)
 
-  const handleChange = (e) => {
-    setForm({ ...form, [e.target.name]: e.target.value })
-    setError('')
-  }
+  const handleChange = (e) => { setForm({ ...form, [e.target.name]: e.target.value }); setError('') }
 
   const handleSubmit = async (e) => {
     e.preventDefault()
-    setLoading(true)
-    setError('')
+    setLoading(true); setError('')
     try {
       const res = await fetch(`${API}/api/auth/login`, {
-        method: 'POST',
-        headers: { 'Content-Type': 'application/json' },
+        method: 'POST', headers: { 'Content-Type': 'application/json' },
         body: JSON.stringify({ email: form.email, password: form.password }),
       })
       const data = await res.json()
       if (!res.ok) throw new Error(data.detail || 'Invalid email or password.')
       login(data.user, data.access_token)
       navigate('/dashboard')
-    } catch (err) {
-      setError(err.message)
-    } finally {
-      setLoading(false)
-    }
+    } catch (err) { setError(err.message) }
+    finally { setLoading(false) }
   }
+
+  const inputStyle = {
+    width: '100%', boxSizing: 'border-box', fontFamily: T.font.sans, fontSize: '0.92rem',
+    padding: '12px 14px', borderRadius: 8, border: `1px solid ${T.border.strong}`,
+    background: T.bg.panel, color: T.text.primary, outline: 'none', transition: 'border-color 0.18s, box-shadow 0.18s',
+  }
+  const labelStyle = { fontFamily: T.font.mono, fontSize: '0.68rem', fontWeight: 500, letterSpacing: '0.1em', textTransform: 'uppercase', color: T.text.muted, display: 'block', marginBottom: 8 }
 
   return (
     <>
@@ -50,108 +155,104 @@ export default function Login() {
         <meta name="robots" content="noindex" />
       </Helmet>
 
-      <div style={{ minHeight: '100vh', background: '#FAFAF7', display: 'flex' }}>
-        <div style={{
-          flex: '0 0 42%', background: '#1A1A18', display: 'flex', flexDirection: 'column',
-          justifyContent: 'space-between', padding: '2.5rem 3rem',
-        }} className="login-left-panel">
-          <Link to="/" style={{ textDecoration: 'none', display: 'flex', alignItems: 'center', gap: 10 }}>
-            <div style={{ width: 32, height: 32, background: '#2D6A4F', borderRadius: 8, display: 'flex', alignItems: 'center', justifyContent: 'center' }}>
-              <svg width="18" height="18" viewBox="0 0 18 18" fill="none">
-                <path d="M4 3h10v2H4zM4 7h10v2H4zM4 11h6v2H4z" fill="#FAFAF7"/>
-                <circle cx="13" cy="13" r="3" fill="#52B788"/>
-              </svg>
-            </div>
-            <span style={{ fontFamily: 'Fraunces, serif', fontWeight: 700, fontSize: '1.15rem', color: '#FAFAF7', letterSpacing: '-0.02em' }}>DocSentinel</span>
-          </Link>
+      <div className="ds-auth" style={{ minHeight: '100vh', background: T.bg.base, display: 'grid', gridTemplateColumns: '1.1fr 1fr' }}>
+        {/* Left */}
+        <div className="ds-auth-left" style={{ background: T.bg.panel, borderRight: `1px solid ${T.border.hairline}`, padding: '2.75rem 3rem', display: 'flex', flexDirection: 'column', justifyContent: 'space-between', position: 'relative', overflow: 'hidden' }}>
+          <div aria-hidden style={{ position: 'absolute', inset: 0, backgroundImage: `linear-gradient(${T.border.hairline} 1px, transparent 1px), linear-gradient(90deg, ${T.border.hairline} 1px, transparent 1px)`, backgroundSize: '44px 44px', opacity: 0.35, maskImage: 'radial-gradient(circle at 30% 20%, black, transparent 75%)', WebkitMaskImage: 'radial-gradient(circle at 30% 20%, black, transparent 75%)' }} />
 
-          <div>
-            <p style={{ fontFamily: 'Fraunces, serif', fontWeight: 600, fontSize: 'clamp(1.4rem, 2.5vw, 2rem)', color: '#FAFAF7', lineHeight: 1.3, letterSpacing: '-0.02em', marginBottom: '1.5rem' }}>
-              "Your documents,<br />finally intelligent."
-            </p>
-            <div style={{ display: 'flex', flexDirection: 'column', gap: 16 }}>
-              {[
-                { icon: '🗄️', text: 'Smart Vault — encrypted, searchable storage' },
-                { icon: '🧾', text: 'GST & invoice data extracted automatically' },
-                { icon: '📋', text: 'Contracts analysed for risks and renewals' },
-              ].map((item, i) => (
-                <div key={i} style={{ display: 'flex', alignItems: 'center', gap: 12 }}>
-                  <span style={{ fontSize: '1.1rem' }}>{item.icon}</span>
-                  <span style={{ fontFamily: 'DM Sans, sans-serif', fontSize: '0.88rem', color: '#AEAEA8', lineHeight: 1.4 }}>{item.text}</span>
-                </div>
-              ))}
-            </div>
+          <div className="ds-rise ds-rise-1" style={{ position: 'relative', zIndex: 1 }}>
+            <Link to="/" style={{ textDecoration: 'none', display: 'flex', alignItems: 'center', gap: 10 }}>
+              <div style={{ width: 30, height: 30, background: T.accent.violet, borderRadius: 6, display: 'flex', alignItems: 'center', justifyContent: 'center', boxShadow: '0 0 18px rgba(124,92,255,0.5)' }}>
+                <svg width="15" height="15" viewBox="0 0 24 24" fill="none">
+                  <path d="M12 2L2 7L12 12L22 7L12 2Z" stroke="#FFF" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round" />
+                  <path d="M2 17L12 22L22 17M2 12L12 17L22 12" stroke="#FFF" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round" />
+                </svg>
+              </div>
+              <span style={{ fontFamily: T.font.mono, fontWeight: 'bold', fontSize: '0.95rem', color: T.text.primary, letterSpacing: '0.14em' }}>DOCSENTINEL</span>
+            </Link>
           </div>
 
-          <p style={{ fontFamily: 'DM Sans, sans-serif', fontSize: '0.78rem', color: '#6B6B64' }}>
-            © {new Date().getFullYear()} PhRedSec™ Private Limited
+          <div style={{ position: 'relative', zIndex: 1 }}>
+            <div className="ds-rise ds-rise-2">
+              <span style={{ fontFamily: T.font.mono, fontSize: '0.68rem', color: T.accent.bright, letterSpacing: '0.14em', textTransform: 'uppercase' }}>Live extraction</span>
+              <h2 style={{ fontFamily: T.font.sans, fontWeight: 600, fontSize: 'clamp(1.3rem, 2vw, 1.7rem)', color: T.text.primary, lineHeight: 1.25, letterSpacing: '-0.02em', margin: '10px 0 22px 0', maxWidth: 360 }}>
+                Paper goes in. Structured data comes out.
+              </h2>
+            </div>
+            <div className="ds-rise ds-rise-3"><ExtractionDemo /></div>
+          </div>
+
+          <p className="ds-rise ds-rise-4" style={{ fontFamily: T.font.mono, fontSize: '0.68rem', color: T.text.faint, letterSpacing: '0.05em', position: 'relative', zIndex: 1 }}>
+            © {new Date().getFullYear()} PHREDSEC™ PRIVATE LIMITED · DATA RESIDENT IN INDIA
           </p>
         </div>
 
-        <div style={{ flex: 1, display: 'flex', alignItems: 'center', justifyContent: 'center', padding: 'clamp(2rem,5vw,4rem)' }}>
-          <div style={{ width: '100%', maxWidth: 420 }}>
-            <h1 style={{ fontFamily: 'Fraunces, serif', fontWeight: 700, fontSize: 'clamp(1.8rem,3vw,2.4rem)', color: '#1A1A18', letterSpacing: '-0.025em', marginBottom: 8 }}>
-              Welcome back
-            </h1>
-            <p style={{ fontFamily: 'DM Sans, sans-serif', color: '#6B6B64', fontSize: '0.95rem', marginBottom: '2rem' }}>
-              Sign in to your DocSentinel account.
-            </p>
+        {/* Right */}
+        <div style={{ display: 'flex', alignItems: 'center', justifyContent: 'center', padding: 'clamp(2rem,5vw,4rem)' }}>
+          <div className="ds-rise ds-rise-2" style={{ width: '100%', maxWidth: 380 }}>
+            <span style={{ fontFamily: T.font.mono, fontSize: '0.68rem', color: T.text.faint, letterSpacing: '0.14em', textTransform: 'uppercase', display: 'block', marginBottom: 12 }}>Authentication</span>
+            <h1 style={{ fontFamily: T.font.sans, fontWeight: 700, fontSize: 'clamp(1.7rem,3vw,2.1rem)', color: T.text.primary, letterSpacing: '-0.03em', margin: '0 0 8px 0' }}>Welcome back</h1>
+            <p style={{ fontFamily: T.font.sans, color: T.text.secondary, fontSize: '0.9rem', marginBottom: '2rem' }}>Sign in to your DocSentinel account.</p>
 
             {error && (
-              <div style={{ background: '#FEF2F2', border: '1px solid rgba(220,38,38,0.2)', borderRadius: 10, padding: '12px 16px', marginBottom: '1.25rem', fontFamily: 'DM Sans, sans-serif', fontSize: '0.88rem', color: '#DC2626' }}>
+              <div style={{ background: 'rgba(248,81,73,0.08)', border: '1px solid rgba(248,81,73,0.30)', borderRadius: 8, padding: '12px 16px', marginBottom: '1.25rem', fontFamily: T.font.mono, fontSize: '0.8rem', color: T.semantic.error }}>
                 {error}
               </div>
             )}
 
-            <form onSubmit={handleSubmit} style={{ display: 'flex', flexDirection: 'column', gap: 16 }}>
+            <form onSubmit={handleSubmit} style={{ display: 'flex', flexDirection: 'column', gap: 18 }}>
               <div>
-                <label style={{ fontFamily: 'DM Sans, sans-serif', fontSize: '0.85rem', fontWeight: 600, color: '#1A1A18', display: 'block', marginBottom: 6 }}>
-                  Email address
-                </label>
-                <input
-                  type="email" name="email" value={form.email} onChange={handleChange}
-                  required placeholder="you@company.com"
-                  style={{ width: '100%', boxSizing: 'border-box', fontFamily: 'DM Sans, sans-serif', fontSize: '0.95rem', padding: '11px 14px', borderRadius: 10, border: '1.5px solid rgba(26,26,24,0.15)', background: '#fff', color: '#1A1A18', outline: 'none', transition: 'border-color 0.2s' }}
-                  onFocus={e => e.target.style.borderColor = '#2D6A4F'}
-                  onBlur={e => e.target.style.borderColor = 'rgba(26,26,24,0.15)'}
-                />
+                <label style={labelStyle}>Email address</label>
+                <input type="email" name="email" value={form.email} onChange={handleChange} required placeholder="you@company.com"
+                  style={inputStyle}
+                  onFocus={e => { e.target.style.borderColor = T.accent.violet; e.target.style.boxShadow = '0 0 0 3px rgba(124,92,255,0.12)' }}
+                  onBlur={e => { e.target.style.borderColor = T.border.strong; e.target.style.boxShadow = 'none' }} />
               </div>
-
               <div>
-                <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', marginBottom: 6 }}>
-                  <label style={{ fontFamily: 'DM Sans, sans-serif', fontSize: '0.85rem', fontWeight: 600, color: '#1A1A18' }}>Password</label>
-                  <a href="#" style={{ fontFamily: 'DM Sans, sans-serif', fontSize: '0.82rem', color: '#2D6A4F', textDecoration: 'none' }}>Forgot password?</a>
+                <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', marginBottom: 8 }}>
+                  <label style={{ ...labelStyle, marginBottom: 0 }}>Password</label>
+                  <a href="#" style={{ fontFamily: T.font.mono, fontSize: '0.7rem', color: T.accent.bright, textDecoration: 'none' }}>Forgot?</a>
                 </div>
-                <input
-                  type="password" name="password" value={form.password} onChange={handleChange}
-                  required placeholder="••••••••"
-                  style={{ width: '100%', boxSizing: 'border-box', fontFamily: 'DM Sans, sans-serif', fontSize: '0.95rem', padding: '11px 14px', borderRadius: 10, border: '1.5px solid rgba(26,26,24,0.15)', background: '#fff', color: '#1A1A18', outline: 'none', transition: 'border-color 0.2s' }}
-                  onFocus={e => e.target.style.borderColor = '#2D6A4F'}
-                  onBlur={e => e.target.style.borderColor = 'rgba(26,26,24,0.15)'}
-                />
+                <input type="password" name="password" value={form.password} onChange={handleChange} required placeholder="••••••••"
+                  style={inputStyle}
+                  onFocus={e => { e.target.style.borderColor = T.accent.violet; e.target.style.boxShadow = '0 0 0 3px rgba(124,92,255,0.12)' }}
+                  onBlur={e => { e.target.style.borderColor = T.border.strong; e.target.style.boxShadow = 'none' }} />
               </div>
-
-              <button
-                type="submit" disabled={loading}
-                style={{ fontFamily: 'DM Sans, sans-serif', fontWeight: 600, fontSize: '1rem', background: loading ? '#6B6B64' : '#1A1A18', color: '#FAFAF7', border: 'none', borderRadius: 10, padding: '13px', cursor: loading ? 'not-allowed' : 'pointer', transition: 'opacity 0.2s', marginTop: 4 }}
-                onMouseEnter={e => { if (!loading) e.target.style.opacity = '0.85' }}
-                onMouseLeave={e => e.target.style.opacity = '1'}
-              >
+              <button type="submit" disabled={loading} className="ds-submit"
+                style={{ fontFamily: T.font.sans, fontWeight: 600, fontSize: '0.95rem', background: loading ? T.bg.panel : T.accent.violet, color: loading ? T.text.muted : '#FFF', border: loading ? `1px solid ${T.border.strong}` : 'none', borderRadius: 8, padding: '13px', cursor: loading ? 'not-allowed' : 'pointer', transition: 'transform 0.12s, box-shadow 0.18s', marginTop: 4 }}>
                 {loading ? 'Signing in…' : 'Sign in'}
               </button>
             </form>
 
-            <p style={{ fontFamily: 'DM Sans, sans-serif', fontSize: '0.88rem', color: '#6B6B64', textAlign: 'center', marginTop: '1.75rem' }}>
+            <p style={{ fontFamily: T.font.sans, fontSize: '0.85rem', color: T.text.secondary, textAlign: 'center', marginTop: '1.75rem' }}>
               Don't have an account?{' '}
-              <Link to="/register" style={{ color: '#2D6A4F', fontWeight: 600, textDecoration: 'none' }}>Create one free</Link>
+              <Link to="/register" style={{ color: T.accent.bright, fontWeight: 600, textDecoration: 'none' }}>Create one free</Link>
             </p>
           </div>
         </div>
       </div>
 
       <style>{`
-        @media (max-width: 768px) {
-          .login-left-panel { display: none !important; }
+        @keyframes ds-scan-move { 0% { top: 8px; } 100% { top: calc(100% - 8px); } }
+        .ds-scan { animation: ds-scan-move 2.2s ease-in-out infinite alternate; }
+        @keyframes ds-caret-blink { 0%,49% { opacity: 1; } 50%,100% { opacity: 0; } }
+        .ds-caret { animation: ds-caret-blink 0.8s steps(1) infinite; color: ${T.accent.bright}; margin-left: 1px; }
+        @keyframes ds-rise-in { from { opacity: 0; transform: translateY(14px); } to { opacity: 1; transform: translateY(0); } }
+        .ds-rise { opacity: 0; animation: ds-rise-in 0.7s cubic-bezier(0.22,1,0.36,1) forwards; }
+        .ds-rise-1 { animation-delay: 0.05s; }
+        .ds-rise-2 { animation-delay: 0.18s; }
+        .ds-rise-3 { animation-delay: 0.32s; }
+        .ds-rise-4 { animation-delay: 0.46s; }
+        .ds-submit:hover:not(:disabled) { box-shadow: 0 6px 20px rgba(124,92,255,0.30); transform: translateY(-1px); }
+        input::placeholder { color: #5B5F66; }
+        @media (max-width: 880px) {
+          .ds-auth { grid-template-columns: 1fr !important; }
+          .ds-auth-left { display: none !important; }
+        }
+        @media (prefers-reduced-motion: reduce) {
+          .ds-scan, .ds-caret { animation: none !important; }
+          .ds-scan { display: none; }
+          .ds-rise { opacity: 1 !important; animation: none !important; transform: none !important; }
         }
       `}</style>
     </>
