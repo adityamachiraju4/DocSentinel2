@@ -67,24 +67,38 @@ function deriveVendor(raw) {
 /* ============================ Preview pane (hero) ============================ */
 
 function PreviewPane({ doc, onDeleted }) {
-  const { authFetch } = useAuth();
+  const { authFetch, sensitiveReauth } = useAuth();
   const [blobUrl, setBlobUrl] = useState(null);
-  const [previewState, setPreviewState] = useState("loading"); // loading | ready | error | missing
+  const [previewState, setPreviewState] = useState("loading"); // loading | ready | error | missing | locked
   const [showRaw, setShowRaw] = useState(false);
+  const [reauthPwd, setReauthPwd] = useState("");
+  const [reauthBusy, setReauthBusy] = useState(false);
+  const [reauthErr, setReauthErr] = useState("");
+  const [sensitive, setSensitive] = useState(false);
+  const [sensBusy, setSensBusy] = useState(false);
+  useEffect(() => { setSensitive(!!doc?.effective_sensitive); }, [doc?.id, doc?.effective_sensitive]);
 
   const isImage = (doc?.mime_type || "").startsWith("image/");
   const isPdf = (doc?.mime_type || "") === "application/pdf";
   const color = doc ? (TYPE_COLORS[doc.document_type] || T.text.muted) : T.text.muted;
   const { brand, legal } = deriveVendor(doc?.vendor_name);
 
-  useEffect(() => {
-    if (!doc) return;
+  const loadPreview = useCallback(() => {
+    if (!doc) return () => {};
     let revoked = false, url = null;
     setPreviewState("loading");
     setShowRaw(false);
     authFetch(`/api/documents/${doc.id}/file`, { cache: "no-store" })
-      .then((res) => {
+      .then(async (res) => {
         if (res.status === 404) { setPreviewState("missing"); return null; }
+        if (res.status === 403) {
+          const body = await res.json().catch(() => ({}));
+          if (body.detail === "sensitive_reauth_required") {
+            if (!revoked) setPreviewState("locked");
+            return null;
+          }
+          return Promise.reject();
+        }
         return res.ok ? res.blob() : Promise.reject();
       })
       .then((blob) => {
@@ -95,7 +109,37 @@ function PreviewPane({ doc, onDeleted }) {
       })
       .catch(() => !revoked && setPreviewState("error"));
     return () => { revoked = true; if (url) URL.revokeObjectURL(url); setBlobUrl((prev) => { if (prev) URL.revokeObjectURL(prev); return null; }); };
-  }, [doc?.id]);
+  }, [doc?.id, authFetch]);
+
+  useEffect(() => {
+    setReauthPwd(""); setReauthErr("");
+    const cleanup = loadPreview();
+    return cleanup;
+  }, [loadPreview]);
+
+  async function handleReauth() {
+    setReauthBusy(true); setReauthErr("");
+    const ok = await sensitiveReauth(reauthPwd);
+    setReauthBusy(false);
+    if (!ok) { setReauthErr("Incorrect password."); return; }
+    setReauthPwd("");
+    loadPreview();
+  }
+  async function toggleSensitive() {
+    if (sensBusy) return;
+    const next = !sensitive;
+    setSensBusy(true);
+    try {
+      const res = await authFetch(`/api/documents/${doc.id}/sensitive?sensitive=${next}`, { method: "PATCH" });
+      if (res.ok) {
+        const body = await res.json();
+        const eff = !!body.effective_sensitive;
+        setSensitive(eff);
+        if (doc) doc.effective_sensitive = eff;
+        if (eff) { setPreviewState("locked"); }
+      }
+    } finally { setSensBusy(false); }
+  }
 
   function handleDownload() {
     authFetch(`/api/documents/${doc.id}/file?download=true`, { cache: "no-store" })
@@ -147,6 +191,9 @@ function PreviewPane({ doc, onDeleted }) {
           <div style={{ fontSize: "11px", fontFamily: T.font.mono, color: T.text.muted, whiteSpace: "nowrap", overflow: "hidden", textOverflow: "ellipsis" }}>{doc.filename}</div>
         </div>
         <div style={{ display: "flex", gap: "8px", flexShrink: 0 }}>
+          <button onClick={toggleSensitive} disabled={sensBusy} title={sensitive ? "Marked sensitive — click to unmark" : "Mark as sensitive"} style={{ ...iconBtn(true), color: sensitive ? T.semantic.error : T.text.muted, borderColor: sensitive ? "rgba(248,81,73,0.25)" : undefined }}>
+            <svg width="15" height="15" viewBox="0 0 24 24" fill={sensitive ? "currentColor" : "none"} stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round"><path d="M12 22s8-4 8-10V5l-8-3-8 3v7c0 6 8 10 8 10z" /></svg>
+          </button>
           <button onClick={handleOpen} disabled={previewState !== "ready"} title="Open in new tab" style={iconBtn(previewState === "ready")}>
             <svg width="15" height="15" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round"><path d="M18 13v6a2 2 0 01-2 2H5a2 2 0 01-2-2V8a2 2 0 012-2h6M15 3h6v6M10 14L21 3" /></svg>
           </button>
@@ -169,7 +216,30 @@ function PreviewPane({ doc, onDeleted }) {
             <div style={{ fontSize: "11px", fontFamily: T.font.mono, color: T.text.faint, lineHeight: 1.5 }}>This document predates encrypted storage. Re-upload it to enable preview.</div>
           </div>
         )}
-        {previewState === "ready" && isPdf && <iframe title="preview" src={`${blobUrl}#toolbar=0&navpanes=0&view=FitH`} style={{ width: "100%", height: "100%", border: T.border.hairline, borderRadius: "8px", background: "#fff" }} />}
+        {previewState === "locked" && (
+          <div style={{ textAlign: "center", maxWidth: "300px" }}>
+            <div style={{ fontSize: "13px", color: T.text.secondary, marginBottom: "4px" }}>Sensitive document</div>
+            <div style={{ fontSize: "11px", fontFamily: T.font.mono, color: T.text.faint, lineHeight: 1.5, marginBottom: "12px" }}>Re-enter your password to view this document.</div>
+            <input
+              type="password"
+              value={reauthPwd}
+              onChange={(e) => setReauthPwd(e.target.value)}
+              onKeyDown={(e) => { if (e.key === "Enter" && reauthPwd && !reauthBusy) handleReauth(); }}
+              placeholder="Password"
+              autoFocus
+              style={{ width: "100%", padding: "8px 10px", fontSize: "13px", fontFamily: T.font.mono, color: T.text.primary, background: T.bg.base, border: T.border.hairline, borderRadius: "8px", outline: "none", marginBottom: "8px" }}
+            />
+            {reauthErr && <div style={{ fontSize: "11px", fontFamily: T.font.mono, color: T.semantic.error, marginBottom: "8px" }}>{reauthErr}</div>}
+            <button
+              onClick={handleReauth}
+              disabled={!reauthPwd || reauthBusy}
+              style={{ width: "100%", padding: "8px 10px", fontSize: "12px", fontFamily: T.font.mono, color: T.text.primary, background: (!reauthPwd || reauthBusy) ? T.bg.panel : T.accent.violet, border: "none", borderRadius: "8px", cursor: (!reauthPwd || reauthBusy) ? "default" : "pointer" }}
+            >
+              {reauthBusy ? "Verifying…" : "Unlock"}
+            </button>
+          </div>
+        )}
+                {previewState === "ready" && isPdf && <iframe title="preview" src={`${blobUrl}#toolbar=0&navpanes=0&view=FitH`} style={{ width: "100%", height: "100%", border: T.border.hairline, borderRadius: "8px", background: "#fff" }} />}
         {previewState === "ready" && isImage && <img alt="preview" src={blobUrl} style={{ maxWidth: "100%", maxHeight: "100%", objectFit: "contain", borderRadius: "8px" }} />}
         {previewState === "ready" && !isPdf && !isImage && <span style={{ fontSize: "12px", fontFamily: T.font.mono, color: T.text.muted }}>No inline preview for this type</span>}
       </div>
@@ -413,7 +483,12 @@ export default function CollectionView() {
                   <div className="cvl-bar" style={{ width: "3px", flexShrink: 0, background: "transparent" }} />
                   <div style={{ padding: "12px 14px", minWidth: 0, flexGrow: 1 }}>
                     <div style={{ display: "flex", alignItems: "center", justifyContent: "space-between", gap: "10px", marginBottom: "4px" }}>
-                      <span style={{ fontSize: "13px", fontWeight: 500, color: T.text.primary, whiteSpace: "nowrap", overflow: "hidden", textOverflow: "ellipsis" }}>{brand || d.filename}</span>
+                      <span style={{ display: "flex", alignItems: "center", gap: "7px", minWidth: 0 }}>
+                        {d.effective_sensitive && (
+                          <span title="Sensitive document" style={{ flexShrink: 0, fontSize: "9px", fontFamily: T.font.mono, fontWeight: 600, textTransform: "uppercase", letterSpacing: "0.05em", padding: "2px 6px", borderRadius: "4px", border: `1px solid ${T.semantic.error}40`, background: `${T.semantic.error}14`, color: T.semantic.error }}>Sensitive</span>
+                        )}
+                        <span style={{ fontSize: "13px", fontWeight: 500, color: T.text.primary, whiteSpace: "nowrap", overflow: "hidden", textOverflow: "ellipsis" }}>{brand || d.filename}</span>
+                      </span>
                       <span style={{ fontSize: "13px", fontFamily: T.font.mono, fontVariantNumeric: "tabular-nums", flexShrink: 0, color: d.total_amount != null ? T.text.primary : T.text.faint }}>{d.total_amount != null ? fmtFull(d.total_amount) : "—"}</span>
                     </div>
                     <div style={{ display: "flex", alignItems: "center", justifyContent: "space-between", gap: "10px" }}>

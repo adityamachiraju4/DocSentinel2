@@ -25,6 +25,7 @@ export function AuthProvider({ children }) {
   // Prevents parallel 401s from firing N simultaneous /refresh calls.
   // The first one refreshes; the rest await the same promise.
   const refreshPromise = useRef(null)
+  const sensitiveGrant = useRef(null)
 
   useEffect(() => {
     const store = sessionStore()
@@ -63,6 +64,7 @@ export function AuthProvider({ children }) {
       store.removeItem('user')
     }
     localStorage.removeItem(MODE_KEY)
+    sensitiveGrant.current = null
     setUser(null)
   }, [])
 
@@ -120,6 +122,7 @@ export function AuthProvider({ children }) {
     const withAuth = (token) => {
       const headers = { ...(options.headers || {}) }
       if (token) headers.Authorization = `Bearer ${token}`
+      if (sensitiveGrant.current) headers['X-Sensitive-Grant'] = sensitiveGrant.current
       return { ...options, headers }
     }
 
@@ -139,8 +142,20 @@ export function AuthProvider({ children }) {
     return fetch(url, withAuth(newToken))
   }, [doRefresh, clearSession])
 
+  const sensitiveReauth = useCallback(async (password) => {
+    const res = await authFetch('/api/auth/sensitive/reauth', {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({ password }),
+    })
+    if (!res.ok) return false
+    const data = await res.json()
+    sensitiveGrant.current = data.sensitive_grant
+    return true
+  }, [authFetch])
+
   return (
-    <AuthContext.Provider value={{ user, loading, login, logout, authFetch }}>
+    <AuthContext.Provider value={{ user, loading, login, logout, authFetch, sensitiveReauth }}>
       {children}
     </AuthContext.Provider>
   )

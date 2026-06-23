@@ -85,6 +85,7 @@ def collection_documents(
                 "invoice_date": d.invoice_date,
                 "processing_status": d.processing_status,
                 "created_at": d.created_at,
+                "effective_sensitive": d.effective_sensitive,
             }
             for d in docs
         ],
