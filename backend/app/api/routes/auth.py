@@ -20,6 +20,7 @@ from app.core.auth import (
     hash_refresh_token,
     new_family_id,
     refresh_token_expiry,
+    create_sensitive_grant,
 )
 from app.core.config import get_settings
 from app.models.user import User
@@ -58,6 +59,9 @@ class LoginVerifyRequest(BaseModel):
     pending_token: str
     code: str | None = None            # TOTP code
     recovery_code: str | None = None   # OR a one-time recovery code
+
+class SensitiveReauthRequest(BaseModel):
+    password: str
 
 class RefreshRequest(BaseModel):
     refresh_token: str
@@ -226,6 +230,19 @@ def refresh(payload: RefreshRequest, db: Session = Depends(get_db)):
 
 
 # ── Logout (revoke all refresh tokens) ────
+
+@router.post("/sensitive/reauth")
+def sensitive_reauth(
+    payload: SensitiveReauthRequest,
+    db: Session = Depends(get_db),
+    current_user: User = Depends(get_current_user),
+):
+    """Re-verify password; mint a short-lived sensitive-access grant."""
+    if not verify_password(payload.password, current_user.hashed_password):
+        raise HTTPException(status_code=401, detail="Incorrect password.")
+    grant = create_sensitive_grant(current_user.id)
+    return {"sensitive_grant": grant}
+
 
 @router.post("/logout")
 def logout(db: Session = Depends(get_db), current_user: User = Depends(get_current_user)):

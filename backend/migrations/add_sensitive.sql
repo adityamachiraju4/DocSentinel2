@@ -1,0 +1,2 @@
+ALTER TABLE documents ADD COLUMN is_sensitive BOOLEAN NOT NULL DEFAULT FALSE;
+ALTER TABLE documents ADD COLUMN sensitive_override BOOLEAN;

@@ -58,7 +58,8 @@ Return ONLY a valid JSON object with these exact keys:
   "total_amount": number or null,
   "gstin": "string or null",
   "hsn_codes": "comma-separated string or null",
-  "tax_amount": number or null
+  "tax_amount": number or null,
+  "raw_text": "the complete verbatim text content of the document"
 }
 
 Return ONLY the JSON. No explanation. No markdown. No extra text."""
@@ -76,6 +77,7 @@ def _empty_result(method: str) -> dict:
         "hsn_codes": None,
         "tax_amount": None,
         "extraction_method": method,
+        "raw_text": None,
     }
 
 # ── Strip ```json fences if the model wraps its output ─────────────────────
@@ -121,6 +123,8 @@ def _validate(raw: dict, method: str) -> dict:
 
     result["total_amount"] = _to_number(raw.get("total_amount"))
     result["tax_amount"] = _to_number(raw.get("tax_amount"))
+    rt = raw.get("raw_text")
+    result["raw_text"] = rt.strip() if isinstance(rt, str) and rt.strip() else None
     return result
 
 # ── Render the first page of a PDF to PNG bytes ────────────────────────────
@@ -161,7 +165,7 @@ def _extract_via_vision(image_bytes: bytes, mime_type: str, method: str) -> dict
             model="meta-llama/llama-4-scout-17b-16e-instruct",
             messages=messages,
             temperature=0.1,
-            max_tokens=500,
+            max_tokens=1500,
         )
         result_text = _strip_fences(response.choices[0].message.content)
         raw = json.loads(result_text)
@@ -203,7 +207,8 @@ Return ONLY a valid JSON object with these exact keys:
   "total_amount": number or null,
   "gstin": "string or null",
   "hsn_codes": "comma-separated string or null",
-  "tax_amount": number or null
+  "tax_amount": number or null,
+  "raw_text": "the complete verbatim text content of the document"
 }}
 
 Return ONLY the JSON. No explanation. No markdown. No extra text."""
@@ -213,11 +218,13 @@ Return ONLY the JSON. No explanation. No markdown. No extra text."""
             model="llama-3.3-70b-versatile",
             messages=[{"role": "user", "content": prompt}],
             temperature=0.1,
-            max_tokens=500,
+            max_tokens=1500,
         )
         result_text = _strip_fences(response.choices[0].message.content)
         raw = json.loads(result_text)
-        return _validate(raw, "groq_text")
+        out = _validate(raw, "groq_text")
+        out["raw_text"] = raw_text
+        return out
 
     except json.JSONDecodeError as e:
         print(f"[TEXT JSON ERROR] {e}")

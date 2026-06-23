@@ -39,6 +39,8 @@ class Document(Base):
     # Status
     is_encrypted = Column(Boolean, default=True)
     processing_status = Column(String, default="pending")
+    is_sensitive = Column(Boolean, default=False, nullable=False)
+    sensitive_override = Column(Boolean, nullable=True)
     extraction_method = Column(String, nullable=True)
 
     # Timestamps
@@ -47,3 +49,9 @@ class Document(Base):
 
     # Relationships
     user = relationship("User", back_populates="documents")
+
+    @property
+    def effective_sensitive(self) -> bool:
+        if self.sensitive_override is not None:
+            return self.sensitive_override
+        return bool(self.is_sensitive)

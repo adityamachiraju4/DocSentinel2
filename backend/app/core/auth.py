@@ -21,8 +21,11 @@ oauth2_scheme = OAuth2PasswordBearer(tokenUrl="/api/auth/login")
 SCOPE_ACCESS = "access"
 SCOPE_2FA_PENDING = "2fa_pending"
 SCOPE_REFRESH = "refresh"
+SCOPE_SENSITIVE = "sensitive_access"
 # A pending token is short-lived: just long enough to type a code.
 PENDING_TOKEN_EXPIRE_MINUTES = 5
+# A sensitive-access grant is short: re-auth opens a brief viewing window.
+SENSITIVE_GRANT_EXPIRE_MINUTES = 5
 # Refresh tokens are long-lived; the access token they mint is short.
 REFRESH_TOKEN_EXPIRE_DAYS = 30
 def hash_password(password: str) -> str:
@@ -106,3 +109,25 @@ def get_current_user(
     if user is None:
         raise credentials_exception
     return user
+
+
+def create_sensitive_grant(user_id: int) -> str:
+    """Mint a short-lived token granting access to sensitive documents."""
+    expire = datetime.utcnow() + timedelta(minutes=SENSITIVE_GRANT_EXPIRE_MINUTES)
+    to_encode = {"sub": str(user_id), "scope": SCOPE_SENSITIVE, "exp": expire}
+    return jwt.encode(to_encode, settings.SECRET_KEY, algorithm=settings.ALGORITHM)
+
+
+def verify_sensitive_grant(grant: str, user_id: int) -> bool:
+    """True if `grant` is a valid, unexpired sensitive-access token for this user."""
+    if not grant:
+        return False
+    try:
+        payload = jwt.decode(grant, settings.SECRET_KEY, algorithms=[settings.ALGORITHM])
+    except JWTError:
+        return False
+    if payload.get("scope") != SCOPE_SENSITIVE:
+        return False
+    if str(payload.get("sub")) != str(user_id):
+        return False
+    return True

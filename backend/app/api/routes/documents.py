@@ -3,7 +3,8 @@
 # PhRedSec™ | api/routes/documents.py
 # ─────────────────────────────────────────
 
-from fastapi import APIRouter, Depends, HTTPException, UploadFile, File, Response
+from fastapi import APIRouter, Depends, HTTPException, UploadFile, File, Response, Header
+from app.core.auth import verify_sensitive_grant
 from sqlalchemy.orm import Session
 
 from app.core.database import get_db
@@ -11,6 +12,7 @@ from app.core.auth import get_current_user
 from app.models.user import User
 from app.models.document import Document
 from app.services.storage_service import save_file, get_file
+from app.services.sensitive_detector import detect_sensitive
 from app.services.document_processor import classify_and_extract
 from app.services.collection_router import route_document_to_collections
 
@@ -68,6 +70,7 @@ async def upload_document(
         hsn_codes=extracted.get("hsn_codes"),
         tax_amount=extracted.get("tax_amount"),
         extraction_method=extracted.get("extraction_method"),
+        is_sensitive=detect_sensitive(extracted.get("raw_text")),
         processing_status="completed",
     )
     db.add(doc)
@@ -209,6 +212,31 @@ def delete_document(
     return {"message": "Document deleted successfully."}
 
 
+@router.patch("/{document_id}/sensitive")
+def set_sensitive_override(
+    document_id: int,
+    sensitive: bool,
+    db: Session = Depends(get_db),
+    current_user: User = Depends(get_current_user),
+):
+    doc = (
+        db.query(Document)
+        .filter(Document.id == document_id, Document.user_id == current_user.id)
+        .first()
+    )
+    if not doc:
+        raise HTTPException(status_code=404, detail="Document not found.")
+    doc.sensitive_override = sensitive
+    db.commit()
+    db.refresh(doc)
+    return {
+        "id": doc.id,
+        "is_sensitive": doc.is_sensitive,
+        "sensitive_override": doc.sensitive_override,
+        "effective_sensitive": doc.effective_sensitive,
+    }
+
+
 @router.get("/")
 def list_documents(
     db: Session = Depends(get_db),
@@ -242,6 +270,7 @@ def list_documents(
 def get_document_file(
     document_id: int,
     download: bool = False,
+    x_sensitive_grant: str = Header(default=""),
     db: Session = Depends(get_db),
     current_user: User = Depends(get_current_user),
 ):
@@ -256,6 +285,11 @@ def get_document_file(
     )
     if not doc:
         raise HTTPException(status_code=404, detail="Document not found.")
+    if doc.effective_sensitive and not verify_sensitive_grant(x_sensitive_grant, current_user.id):
+        raise HTTPException(
+            status_code=403,
+            detail="sensitive_reauth_required",
+        )
     if not doc.r2_key:
         raise HTTPException(status_code=404, detail="No file stored for this document.")
 
