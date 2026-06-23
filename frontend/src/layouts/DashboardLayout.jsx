@@ -1,5 +1,8 @@
+import { useEffect, useState } from "react";
 import { NavLink, Outlet, useNavigate } from "react-router-dom";
 import { useAuth } from "../hooks/useAuth.jsx";
+
+const API = import.meta.env.VITE_API_URL || "http://localhost:8000";
 
 const T = {
   bg: { base: "#07080A", panel: "#0D0E11" },
@@ -16,14 +19,34 @@ const T = {
 const NAV_ITEMS = [
   { label: "Dashboard", to: "/dashboard", icon: "M3 12l2-2m0 0l7-7 7 7M5 10v10a1 1 0 001 1h3m10-11l2 2m-2-2v10a1 1 0 01-1 1h-3m-6 0a1 1 0 001-1v-4a1 1 0 011-1h2a1 1 0 011 1v4a1 1 0 001 1m-6 0h6" },
   { label: "Vault", to: "/vault", icon: "M12 15v2m-6 4h12a2 2 0 002-2v-6a2 2 0 00-2-2H6a2 2 0 00-2 2v6a2 2 0 002 2zm10-10V7a4 4 0 00-8 0v4h8z" },
-  { label: "Invoices", to: "/invoices", icon: "M9 14l2-2 4 4m0-3V3M1 21h22" },
-  { label: "Contracts", to: "/contracts", icon: "M9 12h6m-6 4h6m2 5H7a2 2 0 01-2-2V5a2 2 0 012-2h5.586a1 1 0 01.707.293l5.414 5.414a1 1 0 01.293.707V19a2 2 0 01-2 2z" },
-  { label: "HR", to: "/hr", icon: "M12 4.354a4 4 0 110 5.292M15 21H3v-1a6 6 0 0112 0v1zm0 0h6v-1a6 6 0 00-9-5.197M13 7a4 4 0 11-8 0 4 4 0 018 0z" },
+  { label: "Settings", to: "/settings", icon: "M10.325 4.317c.426-1.756 2.924-1.756 3.35 0a1.724 1.724 0 002.573 1.066c1.543-.94 3.31.826 2.37 2.37a1.724 1.724 0 001.065 2.572c1.756.426 1.756 2.924 0 3.35a1.724 1.724 0 00-1.066 2.573c.94 1.543-.826 3.31-2.37 2.37a1.724 1.724 0 00-2.572 1.065c-.426 1.756-2.924 1.756-3.35 0a1.724 1.724 0 00-2.573-1.066c-1.543.94-3.31-.826-2.37-2.37a1.724 1.724 0 00-1.065-2.572c-1.756-.426-1.756-2.924 0-3.35a1.724 1.724 0 001.066-2.573c-.94-1.543.826-3.31 2.37-2.37.996.608 2.296.07 2.572-1.065zM15 12a3 3 0 11-6 0 3 3 0 016 0z" },
 ];
+
+// Monochrome icon paths keyed by collection slug (lucide-style strokes).
+const COLLECTION_ICONS = {
+  invoices:  "M9 14l2-2 4 4m0-3V3M1 21h22",
+  receipts:  "M9 12h6m-6 4h4m4 5H7a2 2 0 01-2-2V5a2 2 0 012-2h5.586a1 1 0 01.707.293l5.414 5.414a1 1 0 01.293.707V19a2 2 0 01-2 2z",
+  contracts: "M9 12h6m-6 4h6m2 5H7a2 2 0 01-2-2V5a2 2 0 012-2h5.586a1 1 0 01.707.293l5.414 5.414a1 1 0 01.293.707V19a2 2 0 01-2 2z",
+  tax:       "M3 21h18M5 21V7l8-4v18M19 21V11l-6-4",
+  hr:        "M12 4.354a4 4 0 110 5.292M15 21H3v-1a6 6 0 0112 0v1zm0 0h6v-1a6 6 0 00-9-5.197M13 7a4 4 0 11-8 0 4 4 0 018 0z",
+  banking:   "M3 21h18M3 10h18M5 6l7-3 7 3M4 10v11m16-11v11M8 14v3m4-3v3m4-3v3",
+  other:     "M3 7a2 2 0 012-2h4l2 2h8a2 2 0 012 2v8a2 2 0 01-2 2H5a2 2 0 01-2-2V7z",
+};
+const FALLBACK_ICON = COLLECTION_ICONS.other;
 
 export default function DashboardLayout() {
   const { user, logout } = useAuth();
   const navigate = useNavigate();
+  const [collections, setCollections] = useState([]);
+
+  useEffect(() => {
+    const token = localStorage.getItem("token");
+    if (!token) return;
+    fetch(`${API}/api/collections/`, { headers: { Authorization: `Bearer ${token}` } })
+      .then((res) => (res.ok ? res.json() : []))
+      .then((data) => setCollections(Array.isArray(data) ? data : []))
+      .catch(() => setCollections([]));
+  }, []);
 
   function handleLogout() {
     logout();
@@ -32,6 +55,14 @@ export default function DashboardLayout() {
 
   const email = user?.email || "";
   const initials = (email ? email[0] : "D").toUpperCase() + (email.includes("@") ? email.split("@")[0].slice(-1).toUpperCase() : "S");
+
+  const navItemStyle = ({ isActive }) => ({
+    display: "flex", alignItems: "center", gap: "12px", width: "100%", padding: "10px 14px",
+    borderRadius: "6px",
+    backgroundColor: isActive ? "rgba(124,92,255,0.08)" : "transparent",
+    color: isActive ? T.accent.bright : T.text.secondary,
+    fontSize: "13px", fontWeight: isActive ? 600 : 400, fontFamily: T.font.sans,
+  });
 
   return (
     <div style={{
@@ -73,16 +104,9 @@ export default function DashboardLayout() {
           </div>
         </div>
 
-        <nav style={{ flexGrow: 1, padding: "20px 12px", display: "flex", flexDirection: "column", gap: "4px" }}>
+        <nav style={{ flexGrow: 1, padding: "20px 12px", display: "flex", flexDirection: "column", gap: "4px", overflowY: "auto" }}>
           {NAV_ITEMS.map((item) => (
-            <NavLink key={item.to} to={item.to} className="ds-nav" style={({ isActive }) => ({
-              display: "flex", alignItems: "center", gap: "12px", width: "100%", padding: "10px 14px",
-              borderRadius: "6px",
-              backgroundColor: isActive ? "rgba(124,92,255,0.08)" : "transparent",
-              color: isActive ? T.accent.bright : T.text.secondary,
-              fontSize: "13px", fontWeight: isActive ? 600 : 400,
-              fontFamily: T.font.sans,
-            })}>
+            <NavLink key={item.to} to={item.to} className="ds-nav" style={navItemStyle}>
               {({ isActive }) => (
                 <>
                   <svg style={{
@@ -98,12 +122,45 @@ export default function DashboardLayout() {
               )}
             </NavLink>
           ))}
+
+          {/* Collections section */}
+          <div style={{
+            padding: "16px 14px 8px", fontSize: "10px", fontFamily: T.font.mono,
+            letterSpacing: "0.1em", color: T.text.faint, textTransform: "uppercase",
+          }}>
+            Collections
+          </div>
+
+          {collections.map((c) => {
+            const icon = COLLECTION_ICONS[c.slug] || FALLBACK_ICON;
+            return (
+              <NavLink key={c.slug} to={`/collections/${c.slug}`} className="ds-nav" style={navItemStyle}>
+                {({ isActive }) => (
+                  <>
+                    <svg style={{
+                      width: "16px", height: "16px",
+                      stroke: isActive ? T.accent.bright : T.text.muted,
+                      fill: "none", strokeWidth: "1.8", strokeLinecap: "round", strokeLinejoin: "round",
+                    }} viewBox="0 0 24 24">
+                      <path d={icon} />
+                    </svg>
+                    <span style={{ flexGrow: 1 }}>{c.name}</span>
+                    <span style={{
+                      fontSize: "10px", fontFamily: T.font.mono,
+                      color: isActive ? T.accent.bright : T.text.faint,
+                      fontVariantNumeric: "tabular-nums",
+                    }}>{c.count}</span>
+                  </>
+                )}
+              </NavLink>
+            );
+          })}
         </nav>
 
         <div style={{ padding: "16px", borderTop: T.border.hairline }}>
           <div style={{ display: "flex", alignItems: "center", gap: "8px" }}>
             <span style={{ width: "6px", height: "6px", borderRadius: "50%", backgroundColor: T.semantic.success, display: "inline-block" }} />
-            <span style={{ fontSize: "10px", fontFamily: T.font.mono, color: T.text.muted, letterSpacing: "0.05em" }}>AES-256 · DATA IN INDIA</span>
+            <span style={{ fontSize: "10px", fontFamily: T.font.mono, color: T.text.muted, letterSpacing: "0.05em" }}>AES-256 · ASIA PACIFIC</span>
           </div>
         </div>
       </aside>

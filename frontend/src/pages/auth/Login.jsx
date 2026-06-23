@@ -28,7 +28,6 @@ const EXTRACT_FIELDS = [
 
 const REDUCE = typeof window !== 'undefined' && window.matchMedia('(prefers-reduced-motion: reduce)').matches
 
-// One field row that types its value in, char by char
 function ExtractRow({ field, active, done, last }) {
   const [typed, setTyped] = useState('')
 
@@ -69,8 +68,8 @@ function ExtractRow({ field, active, done, last }) {
 }
 
 function ExtractionDemo() {
-  const [active, setActive] = useState(-1)   // index currently typing
-  const [doneTo, setDoneTo] = useState(-1)   // fields fully revealed up to
+  const [active, setActive] = useState(-1)
+  const [doneTo, setDoneTo] = useState(-1)
   const [scanning, setScanning] = useState(true)
 
   useEffect(() => {
@@ -123,7 +122,22 @@ export default function Login() {
   const [error, setError] = useState('')
   const [loading, setLoading] = useState(false)
 
+  // 2FA two-call flow state
+  const [stage, setStage] = useState('password')   // 'password' | 'totp'
+  const [pendingToken, setPendingToken] = useState('')
+  const [code, setCode] = useState('')
+  const codeRef = useRef(null)
+
+  useEffect(() => {
+    if (stage === 'totp' && codeRef.current) codeRef.current.focus()
+  }, [stage])
+
   const handleChange = (e) => { setForm({ ...form, [e.target.name]: e.target.value }); setError('') }
+
+  const finishLogin = (data) => {
+    login(data.user, data.access_token, data.refresh_token)
+    navigate('/dashboard')
+  }
 
   const handleSubmit = async (e) => {
     e.preventDefault()
@@ -135,10 +149,36 @@ export default function Login() {
       })
       const data = await res.json()
       if (!res.ok) throw new Error(data.detail || 'Invalid email or password.')
-      login(data.user, data.access_token)
-      navigate('/dashboard')
+
+      // 2FA-enabled account: no access token yet, switch to code entry.
+      if (data.totp_required) {
+        setPendingToken(data.pending_token)
+        setStage('totp')
+        return
+      }
+
+      finishLogin(data)
     } catch (err) { setError(err.message) }
     finally { setLoading(false) }
+  }
+
+  const handleVerify = async (e) => {
+    e.preventDefault()
+    setLoading(true); setError('')
+    try {
+      const res = await fetch(`${API}/api/auth/login/verify`, {
+        method: 'POST', headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ pending_token: pendingToken, code }),
+      })
+      const data = await res.json()
+      if (!res.ok) throw new Error(data.detail || 'Invalid code.')
+      finishLogin(data)
+    } catch (err) { setError(err.message) }
+    finally { setLoading(false) }
+  }
+
+  const backToPassword = () => {
+    setStage('password'); setCode(''); setPendingToken(''); setError('')
   }
 
   const inputStyle = {
@@ -147,6 +187,8 @@ export default function Login() {
     background: T.bg.panel, color: T.text.primary, outline: 'none', transition: 'border-color 0.18s, box-shadow 0.18s',
   }
   const labelStyle = { fontFamily: T.font.mono, fontSize: '0.68rem', fontWeight: 500, letterSpacing: '0.1em', textTransform: 'uppercase', color: T.text.muted, display: 'block', marginBottom: 8 }
+  const focusOn = e => { e.target.style.borderColor = T.accent.violet; e.target.style.boxShadow = '0 0 0 3px rgba(124,92,255,0.12)' }
+  const focusOff = e => { e.target.style.borderColor = T.border.strong; e.target.style.boxShadow = 'none' }
 
   return (
     <>
@@ -183,51 +225,92 @@ export default function Login() {
           </div>
 
           <p className="ds-rise ds-rise-4" style={{ fontFamily: T.font.mono, fontSize: '0.68rem', color: T.text.faint, letterSpacing: '0.05em', position: 'relative', zIndex: 1 }}>
-            © {new Date().getFullYear()} PHREDSEC™ PRIVATE LIMITED · DATA RESIDENT IN INDIA
+            © {new Date().getFullYear()} PHREDSEC™ PRIVATE LIMITED
           </p>
         </div>
 
         {/* Right */}
         <div style={{ display: 'flex', alignItems: 'center', justifyContent: 'center', padding: 'clamp(2rem,5vw,4rem)' }}>
           <div className="ds-rise ds-rise-2" style={{ width: '100%', maxWidth: 380 }}>
-            <span style={{ fontFamily: T.font.mono, fontSize: '0.68rem', color: T.text.faint, letterSpacing: '0.14em', textTransform: 'uppercase', display: 'block', marginBottom: 12 }}>Authentication</span>
-            <h1 style={{ fontFamily: T.font.sans, fontWeight: 700, fontSize: 'clamp(1.7rem,3vw,2.1rem)', color: T.text.primary, letterSpacing: '-0.03em', margin: '0 0 8px 0' }}>Welcome back</h1>
-            <p style={{ fontFamily: T.font.sans, color: T.text.secondary, fontSize: '0.9rem', marginBottom: '2rem' }}>Sign in to your DocSentinel account.</p>
 
-            {error && (
-              <div style={{ background: 'rgba(248,81,73,0.08)', border: '1px solid rgba(248,81,73,0.30)', borderRadius: 8, padding: '12px 16px', marginBottom: '1.25rem', fontFamily: T.font.mono, fontSize: '0.8rem', color: T.semantic.error }}>
-                {error}
-              </div>
+            {stage === 'password' ? (
+              <>
+                <span style={{ fontFamily: T.font.mono, fontSize: '0.68rem', color: T.text.faint, letterSpacing: '0.14em', textTransform: 'uppercase', display: 'block', marginBottom: 12 }}>Authentication</span>
+                <h1 style={{ fontFamily: T.font.sans, fontWeight: 700, fontSize: 'clamp(1.7rem,3vw,2.1rem)', color: T.text.primary, letterSpacing: '-0.03em', margin: '0 0 8px 0' }}>Welcome back</h1>
+                <p style={{ fontFamily: T.font.sans, color: T.text.secondary, fontSize: '0.9rem', marginBottom: '2rem' }}>Sign in to your DocSentinel account.</p>
+
+                {error && (
+                  <div style={{ background: 'rgba(248,81,73,0.08)', border: '1px solid rgba(248,81,73,0.30)', borderRadius: 8, padding: '12px 16px', marginBottom: '1.25rem', fontFamily: T.font.mono, fontSize: '0.8rem', color: T.semantic.error }}>
+                    {error}
+                  </div>
+                )}
+
+                <form onSubmit={handleSubmit} style={{ display: 'flex', flexDirection: 'column', gap: 18 }}>
+                  <div>
+                    <label style={labelStyle}>Email address</label>
+                    <input type="email" name="email" value={form.email} onChange={handleChange} required placeholder="you@company.com"
+                      style={inputStyle} onFocus={focusOn} onBlur={focusOff} />
+                  </div>
+                  <div>
+                    <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', marginBottom: 8 }}>
+                      <label style={{ ...labelStyle, marginBottom: 0 }}>Password</label>
+                      <a href="#" style={{ fontFamily: T.font.mono, fontSize: '0.7rem', color: T.accent.bright, textDecoration: 'none' }}>Forgot?</a>
+                    </div>
+                    <input type="password" name="password" value={form.password} onChange={handleChange} required placeholder="••••••••"
+                      style={inputStyle} onFocus={focusOn} onBlur={focusOff} />
+                  </div>
+                  <button type="submit" disabled={loading} className="ds-submit"
+                    style={{ fontFamily: T.font.sans, fontWeight: 600, fontSize: '0.95rem', background: loading ? T.bg.panel : T.accent.violet, color: loading ? T.text.muted : '#FFF', border: loading ? `1px solid ${T.border.strong}` : 'none', borderRadius: 8, padding: '13px', cursor: loading ? 'not-allowed' : 'pointer', transition: 'transform 0.12s, box-shadow 0.18s', marginTop: 4 }}>
+                    {loading ? 'Signing in…' : 'Sign in'}
+                  </button>
+                </form>
+
+                <p style={{ fontFamily: T.font.sans, fontSize: '0.85rem', color: T.text.secondary, textAlign: 'center', marginTop: '1.75rem' }}>
+                  Don't have an account?{' '}
+                  <Link to="/register" style={{ color: T.accent.bright, fontWeight: 600, textDecoration: 'none' }}>Create one free</Link>
+                </p>
+              </>
+            ) : (
+              <>
+                <span style={{ fontFamily: T.font.mono, fontSize: '0.68rem', color: T.text.faint, letterSpacing: '0.14em', textTransform: 'uppercase', display: 'block', marginBottom: 12 }}>Two-factor</span>
+                <h1 style={{ fontFamily: T.font.sans, fontWeight: 700, fontSize: 'clamp(1.7rem,3vw,2.1rem)', color: T.text.primary, letterSpacing: '-0.03em', margin: '0 0 8px 0' }}>Enter your code</h1>
+                <p style={{ fontFamily: T.font.sans, color: T.text.secondary, fontSize: '0.9rem', marginBottom: '2rem' }}>Open your authenticator app and enter the 6-digit code.</p>
+
+                {error && (
+                  <div style={{ background: 'rgba(248,81,73,0.08)', border: '1px solid rgba(248,81,73,0.30)', borderRadius: 8, padding: '12px 16px', marginBottom: '1.25rem', fontFamily: T.font.mono, fontSize: '0.8rem', color: T.semantic.error }}>
+                    {error}
+                  </div>
+                )}
+
+                <form onSubmit={handleVerify} style={{ display: 'flex', flexDirection: 'column', gap: 18 }}>
+                  <div>
+                    <label style={labelStyle}>Authentication code</label>
+                    <input
+                      ref={codeRef}
+                      type="text"
+                      inputMode="numeric"
+                      autoComplete="one-time-code"
+                      maxLength={6}
+                      value={code}
+                      onChange={e => { setCode(e.target.value.replace(/\D/g, '')); setError('') }}
+                      required
+                      placeholder="000000"
+                      style={{ ...inputStyle, fontFamily: T.font.mono, fontSize: '1.4rem', letterSpacing: '0.4em', textAlign: 'center' }}
+                      onFocus={focusOn} onBlur={focusOff} />
+                  </div>
+                  <button type="submit" disabled={loading || code.length !== 6} className="ds-submit"
+                    style={{ fontFamily: T.font.sans, fontWeight: 600, fontSize: '0.95rem', background: (loading || code.length !== 6) ? T.bg.panel : T.accent.violet, color: (loading || code.length !== 6) ? T.text.muted : '#FFF', border: (loading || code.length !== 6) ? `1px solid ${T.border.strong}` : 'none', borderRadius: 8, padding: '13px', cursor: (loading || code.length !== 6) ? 'not-allowed' : 'pointer', transition: 'transform 0.12s, box-shadow 0.18s', marginTop: 4 }}>
+                    {loading ? 'Verifying…' : 'Verify & sign in'}
+                  </button>
+                </form>
+
+                <button onClick={backToPassword}
+                  style={{ display: 'block', margin: '1.75rem auto 0', background: 'none', border: 'none', cursor: 'pointer', fontFamily: T.font.sans, fontSize: '0.85rem', color: T.text.secondary }}>
+                  ← Back to sign in
+                </button>
+              </>
             )}
 
-            <form onSubmit={handleSubmit} style={{ display: 'flex', flexDirection: 'column', gap: 18 }}>
-              <div>
-                <label style={labelStyle}>Email address</label>
-                <input type="email" name="email" value={form.email} onChange={handleChange} required placeholder="you@company.com"
-                  style={inputStyle}
-                  onFocus={e => { e.target.style.borderColor = T.accent.violet; e.target.style.boxShadow = '0 0 0 3px rgba(124,92,255,0.12)' }}
-                  onBlur={e => { e.target.style.borderColor = T.border.strong; e.target.style.boxShadow = 'none' }} />
-              </div>
-              <div>
-                <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', marginBottom: 8 }}>
-                  <label style={{ ...labelStyle, marginBottom: 0 }}>Password</label>
-                  <a href="#" style={{ fontFamily: T.font.mono, fontSize: '0.7rem', color: T.accent.bright, textDecoration: 'none' }}>Forgot?</a>
-                </div>
-                <input type="password" name="password" value={form.password} onChange={handleChange} required placeholder="••••••••"
-                  style={inputStyle}
-                  onFocus={e => { e.target.style.borderColor = T.accent.violet; e.target.style.boxShadow = '0 0 0 3px rgba(124,92,255,0.12)' }}
-                  onBlur={e => { e.target.style.borderColor = T.border.strong; e.target.style.boxShadow = 'none' }} />
-              </div>
-              <button type="submit" disabled={loading} className="ds-submit"
-                style={{ fontFamily: T.font.sans, fontWeight: 600, fontSize: '0.95rem', background: loading ? T.bg.panel : T.accent.violet, color: loading ? T.text.muted : '#FFF', border: loading ? `1px solid ${T.border.strong}` : 'none', borderRadius: 8, padding: '13px', cursor: loading ? 'not-allowed' : 'pointer', transition: 'transform 0.12s, box-shadow 0.18s', marginTop: 4 }}>
-                {loading ? 'Signing in…' : 'Sign in'}
-              </button>
-            </form>
-
-            <p style={{ fontFamily: T.font.sans, fontSize: '0.85rem', color: T.text.secondary, textAlign: 'center', marginTop: '1.75rem' }}>
-              Don't have an account?{' '}
-              <Link to="/register" style={{ color: T.accent.bright, fontWeight: 600, textDecoration: 'none' }}>Create one free</Link>
-            </p>
           </div>
         </div>
       </div>

@@ -3,15 +3,16 @@
 # PhRedSec™ | api/routes/documents.py
 # ─────────────────────────────────────────
 
-from fastapi import APIRouter, Depends, HTTPException, UploadFile, File
+from fastapi import APIRouter, Depends, HTTPException, UploadFile, File, Response
 from sqlalchemy.orm import Session
 
 from app.core.database import get_db
 from app.core.auth import get_current_user
 from app.models.user import User
 from app.models.document import Document
-from app.services.storage_service import save_file
+from app.services.storage_service import save_file, get_file
 from app.services.document_processor import classify_and_extract
+from app.services.collection_router import route_document_to_collections
 
 router = APIRouter(prefix="/documents", tags=["documents"])
 
@@ -75,6 +76,7 @@ async def upload_document(
 
     db.commit()
     db.refresh(doc)
+    route_document_to_collections(db, doc.id, doc.document_type, source="AI")
 
     return {
         "message": "Document uploaded and processed successfully.",
@@ -234,3 +236,43 @@ def list_documents(
             for d in docs
         ]
     }
+
+
+@router.get("/{document_id}/file")
+def get_document_file(
+    document_id: int,
+    download: bool = False,
+    db: Session = Depends(get_db),
+    current_user: User = Depends(get_current_user),
+):
+    """
+    Decrypt the document from R2 and return the original bytes.
+    Inline by default (browser preview); attachment if download=true.
+    """
+    doc = (
+        db.query(Document)
+        .filter(Document.id == document_id, Document.user_id == current_user.id)
+        .first()
+    )
+    if not doc:
+        raise HTTPException(status_code=404, detail="Document not found.")
+    if not doc.r2_key:
+        raise HTTPException(status_code=404, detail="No file stored for this document.")
+
+    try:
+        file_bytes = get_file(doc.r2_key)
+    except Exception as e:
+        # Old documents created before R2 storage may have no object.
+        if "NoSuchKey" in type(e).__name__ or "NoSuchKey" in str(e):
+            raise HTTPException(status_code=404, detail="File not found in storage.")
+        raise HTTPException(status_code=500, detail="Could not retrieve file.")
+
+    media_type = doc.mime_type or "application/octet-stream"
+    disposition = "attachment" if download else "inline"
+    # RFC 5987 filename to handle spaces/unicode safely
+    from urllib.parse import quote
+    safe_name = quote(doc.original_filename or "document")
+    headers = {
+        "Content-Disposition": f"{disposition}; filename*=UTF-8''{safe_name}",
+    }
+    return Response(content=file_bytes, media_type=media_type, headers=headers)

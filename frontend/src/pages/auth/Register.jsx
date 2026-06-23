@@ -23,7 +23,6 @@ const REDUCE = typeof window !== 'undefined' && window.matchMedia('(prefers-redu
 const PROVISION_STEPS = [
   { key: 'WORKSPACE', value: 'Provisioned' },
   { key: 'ENCRYPTION', value: 'AES-256-GCM' },
-  { key: 'DATA REGION', value: 'India (Mumbai)' },
   { key: 'PLAN', value: 'Free · 25 docs/mo' },
   { key: 'STATUS', value: 'Ready' },
 ]
@@ -181,7 +180,7 @@ export default function Register() {
           </div>
 
           <p className="ds-rise ds-rise-4" style={{ fontFamily: T.font.mono, fontSize: '0.68rem', color: T.text.faint, letterSpacing: '0.05em', position: 'relative', zIndex: 1 }}>
-            © {new Date().getFullYear()} PHREDSEC™ PRIVATE LIMITED · DATA RESIDENT IN INDIA
+            © {new Date().getFullYear()} PHREDSEC™ PRIVATE LIMITED
           </p>
         </div>
 
