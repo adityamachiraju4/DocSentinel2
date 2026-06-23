@@ -20,15 +20,19 @@ export default function Settings() {
   const { user, authFetch } = useAuth();
 
   const [enabled, setEnabled] = useState(null); // null = loading
+  const [remaining, setRemaining] = useState(null);
   const [loadErr, setLoadErr] = useState("");
 
   // enrollment state
-  const [stage, setStage] = useState("idle"); // idle | enrolling | disabling
+  const [stage, setStage] = useState("idle"); // idle | enrolling | disabling | regenerating
   const [qr, setQr] = useState("");
   const [secret, setSecret] = useState("");
   const [code, setCode] = useState("");
   const [busy, setBusy] = useState(false);
   const [err, setErr] = useState("");
+
+  // recovery codes shown once (after confirm or regenerate)
+  const [recoveryCodes, setRecoveryCodes] = useState(null);
 
   async function refreshStatus() {
     try {
@@ -36,6 +40,11 @@ export default function Settings() {
       if (!res.ok) throw new Error("status " + res.status);
       const data = await res.json();
       setEnabled(!!data.totp_enabled);
+      setRemaining(
+        typeof data.recovery_codes_remaining === "number"
+          ? data.recovery_codes_remaining
+          : null
+      );
     } catch (e) {
       setLoadErr("Could not load security status.");
     }
@@ -72,8 +81,39 @@ export default function Settings() {
         const d = await res.json().catch(() => ({}));
         throw new Error(d.detail || "Invalid code");
       }
+      const data = await res.json().catch(() => ({}));
       setStage("idle"); setQr(""); setSecret(""); setCode("");
       setEnabled(true);
+      if (Array.isArray(data.recovery_codes) && data.recovery_codes.length) {
+        setRecoveryCodes(data.recovery_codes);
+      }
+      refreshStatus();
+    } catch (e) {
+      setErr(typeof e.message === "string" ? e.message : "Invalid code. Try again.");
+    } finally {
+      setBusy(false);
+    }
+  }
+
+  async function regenerateCodes() {
+    if (code.length !== 6) return;
+    setErr(""); setBusy(true);
+    try {
+      const res = await authFetch(`${API}/api/auth/2fa/recovery/regenerate`, {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({ code }),
+      });
+      if (!res.ok) {
+        const d = await res.json().catch(() => ({}));
+        throw new Error(d.detail || "Invalid code");
+      }
+      const data = await res.json().catch(() => ({}));
+      setStage("idle"); setCode("");
+      if (Array.isArray(data.recovery_codes) && data.recovery_codes.length) {
+        setRecoveryCodes(data.recovery_codes);
+      }
+      refreshStatus();
     } catch (e) {
       setErr(typeof e.message === "string" ? e.message : "Invalid code. Try again.");
     } finally {
@@ -100,11 +140,32 @@ export default function Settings() {
       }
       setStage("idle"); setCode("");
       setEnabled(false);
+      setRemaining(null);
+      setRecoveryCodes(null);
     } catch (e) {
       setErr(typeof e.message === "string" ? e.message : "Invalid code. Try again.");
     } finally {
       setBusy(false);
     }
+  }
+
+  function copyCodes() {
+    if (!recoveryCodes) return;
+    navigator.clipboard?.writeText(recoveryCodes.join("\n")).catch(() => {});
+  }
+
+  function downloadCodes() {
+    if (!recoveryCodes) return;
+    const blob = new Blob(
+      ["DocSentinel recovery codes\nEach code works once. Store them somewhere safe.\n\n" + recoveryCodes.join("\n") + "\n"],
+      { type: "text/plain" }
+    );
+    const url = URL.createObjectURL(blob);
+    const a = document.createElement("a");
+    a.href = url;
+    a.download = "docsentinel-recovery-codes.txt";
+    a.click();
+    URL.revokeObjectURL(url);
   }
 
   const codeInputStyle = {
@@ -242,6 +303,92 @@ export default function Settings() {
           </div>
         )}
       </section>
+
+      {/* Recovery codes card — only when 2FA is on */}
+      {enabled === true && (
+        <section style={{
+          background: T.card, border: T.border.hairline, borderRadius: "10px",
+          padding: "24px",
+        }}>
+          <div style={{ display: "flex", alignItems: "center", justifyContent: "space-between", marginBottom: "6px" }}>
+            <h2 style={{ fontSize: "15px", fontWeight: 600, color: T.text.primary, margin: 0 }}>
+              Recovery codes
+            </h2>
+            {remaining !== null && (
+              <span style={{
+                fontFamily: T.font.mono, fontSize: "10px", letterSpacing: "0.08em",
+                padding: "3px 8px", borderRadius: "4px",
+                color: remaining > 0 ? T.text.secondary : T.semantic.warning,
+                border: `1px solid ${remaining > 0 ? "rgba(255,255,255,0.14)" : "rgba(210,153,34,0.4)"}`,
+                backgroundColor: remaining > 0 ? "transparent" : "rgba(210,153,34,0.08)",
+                fontVariantNumeric: "tabular-nums",
+              }}>
+                {remaining} REMAINING
+              </span>
+            )}
+          </div>
+          <p style={{ fontSize: "13px", color: T.text.secondary, lineHeight: 1.5, margin: "0 0 18px" }}>
+            Single-use codes to sign in if you lose access to your authenticator. Each works once.
+          </p>
+
+          {/* Freshly minted codes — shown once */}
+          {recoveryCodes && (
+            <div style={{
+              background: T.bg.base, border: `1px solid rgba(210,153,34,0.4)`,
+              borderRadius: "8px", padding: "16px", marginBottom: "18px",
+            }}>
+              <div style={{ fontSize: "11px", fontFamily: T.font.mono, color: T.semantic.warning, letterSpacing: "0.06em", marginBottom: "12px" }}>
+                SAVE THESE NOW — THEY WON'T BE SHOWN AGAIN
+              </div>
+              <div style={{
+                display: "grid", gridTemplateColumns: "repeat(2, minmax(0, 1fr))",
+                gap: "8px 16px", marginBottom: "14px",
+              }}>
+                {recoveryCodes.map((c) => (
+                  <code key={c} style={{
+                    fontFamily: T.font.mono, fontSize: "14px", color: T.text.primary,
+                    letterSpacing: "0.1em", fontVariantNumeric: "tabular-nums",
+                  }}>{c}</code>
+                ))}
+              </div>
+              <div style={{ display: "flex", gap: "10px" }}>
+                <button onClick={copyCodes} style={btnGhost}>Copy</button>
+                <button onClick={downloadCodes} style={btnGhost}>Download .txt</button>
+                <button onClick={() => setRecoveryCodes(null)} style={btnPrimary(false)}>I've saved them</button>
+              </div>
+            </div>
+          )}
+
+          {/* Regenerate flow */}
+          {!recoveryCodes && stage !== "regenerating" && (
+            <button onClick={() => { setStage("regenerating"); setErr(""); setCode(""); }} style={btnGhost}>
+              Regenerate recovery codes
+            </button>
+          )}
+
+          {stage === "regenerating" && (
+            <div>
+              <p style={{ fontSize: "13px", color: T.text.secondary, margin: "0 0 12px" }}>
+                This invalidates your existing codes. Enter a current 6-digit code to confirm.
+              </p>
+              <input
+                value={code}
+                onChange={(e) => setCode(e.target.value.replace(/\D/g, "").slice(0, 6))}
+                placeholder="000000"
+                inputMode="numeric"
+                style={codeInputStyle}
+              />
+              {err && <div style={{ color: T.semantic.error, fontSize: "12px", fontFamily: T.font.mono, margin: "10px 0 0" }}>{err}</div>}
+              <div style={{ display: "flex", gap: "10px", marginTop: "18px" }}>
+                <button onClick={regenerateCodes} disabled={busy || code.length !== 6} style={btnPrimary(busy || code.length !== 6)}>
+                  {busy ? "Generating…" : "Regenerate"}
+                </button>
+                <button onClick={cancelEnroll} disabled={busy} style={btnGhost}>Cancel</button>
+              </div>
+            </div>
+          )}
+        </section>
+      )}
     </div>
   );
 }
