@@ -82,7 +82,7 @@ function PreviewPane({ doc, onDeleted }) {
     let revoked = false, url = null;
     setPreviewState("loading");
     setShowRaw(false);
-    authFetch(`/api/documents/${doc.id}/file`)
+    authFetch(`/api/documents/${doc.id}/file`, { cache: "no-store" })
       .then((res) => {
         if (res.status === 404) { setPreviewState("missing"); return null; }
         return res.ok ? res.blob() : Promise.reject();
@@ -94,11 +94,11 @@ function PreviewPane({ doc, onDeleted }) {
         setPreviewState("ready");
       })
       .catch(() => !revoked && setPreviewState("error"));
-    return () => { revoked = true; if (url) URL.revokeObjectURL(url); };
+    return () => { revoked = true; if (url) URL.revokeObjectURL(url); setBlobUrl((prev) => { if (prev) URL.revokeObjectURL(prev); return null; }); };
   }, [doc?.id]);
 
   function handleDownload() {
-    authFetch(`/api/documents/${doc.id}/file?download=true`)
+    authFetch(`/api/documents/${doc.id}/file?download=true`, { cache: "no-store" })
       .then((res) => res.blob())
       .then((blob) => {
         const url = URL.createObjectURL(blob);

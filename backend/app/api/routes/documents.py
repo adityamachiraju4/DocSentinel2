@@ -274,5 +274,8 @@ def get_document_file(
     safe_name = quote(doc.original_filename or "document")
     headers = {
         "Content-Disposition": f"{disposition}; filename*=UTF-8''{safe_name}",
+        "Cache-Control": "no-store, no-cache, must-revalidate, private",
+        "Pragma": "no-cache",
+        "Expires": "0",
     }
     return Response(content=file_bytes, media_type=media_type, headers=headers)
