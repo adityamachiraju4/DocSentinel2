@@ -64,19 +64,90 @@ function deriveVendor(raw) {
   return { brand: brand || trimmed, legal: differs ? trimmed : null };
 }
 
+const EVENT_META = {
+  DOCUMENT_UPLOAD:   { label: "Uploaded",          color: "#7C5CFF" },
+  DOCUMENT_VIEW:     { label: "Viewed",            color: "#3FB950" },
+  DOCUMENT_DOWNLOAD: { label: "Downloaded",        color: "#9B82FF" },
+  SENSITIVE_ACCESS:  { label: "Sensitive unlock",  color: "#F85149" },
+  DELETE:            { label: "Deleted",           color: "#858992" },
+};
+
+function fmtWhen(iso) {
+  if (!iso) return "—";
+  const d = new Date(iso.endsWith("Z") || iso.includes("+") ? iso : iso + "Z");
+  if (isNaN(d)) return "—";
+  const diff = (Date.now() - d.getTime()) / 1000;
+  if (diff < 60) return "just now";
+  if (diff < 3600) return `${Math.floor(diff / 60)}m ago`;
+  if (diff < 86400) return `${Math.floor(diff / 3600)}h ago`;
+  if (diff < 604800) return `${Math.floor(diff / 86400)}d ago`;
+  return d.toLocaleDateString(undefined, { day: "numeric", month: "short", year: "numeric" });
+}
+
+function friendlyDevice(ua) {
+  if (!ua) return null;
+  let os = "";
+  if (/Windows/i.test(ua)) os = "Windows";
+  else if (/iPhone|iPad|iPod/i.test(ua)) os = "iOS";
+  else if (/Mac OS X|Macintosh/i.test(ua)) os = "macOS";
+  else if (/Android/i.test(ua)) os = "Android";
+  else if (/Linux/i.test(ua)) os = "Linux";
+  let br = "";
+  if (/Edg\//i.test(ua)) br = "Edge";
+  else if (/OPR\/|Opera/i.test(ua)) br = "Opera";
+  else if (/Chrome\//i.test(ua)) br = "Chrome";
+  else if (/Firefox\//i.test(ua)) br = "Firefox";
+  else if (/Safari\//i.test(ua)) br = "Safari";
+  else if (/curl/i.test(ua)) br = "curl";
+  if (br && os) return `${br} on ${os}`;
+  if (br) return br;
+  if (os) return os;
+  return ua.length > 40 ? ua.slice(0, 40) + "…" : ua;
+}
+
+// Collapse consecutive identical (event_type + device) events into one row.
+// No underlying data is dropped — count reflects how many raw events merged.
+function groupActivity(rows) {
+  const out = [];
+  for (const e of rows) {
+    const prev = out[out.length - 1];
+    if (prev && prev.event_type === e.event_type && prev.device === e.device) {
+      prev.count += 1;
+      // rows are newest-first; keep the newest (first-seen) created_at
+    } else {
+      out.push({ ...e, count: 1 });
+    }
+  }
+  return out;
+}
+
 /* ============================ Preview pane (hero) ============================ */
 
 function PreviewPane({ doc, onDeleted }) {
   const { authFetch, sensitiveReauth } = useAuth();
   const [blobUrl, setBlobUrl] = useState(null);
   const [previewState, setPreviewState] = useState("loading"); // loading | ready | error | missing | locked
-  const [showRaw, setShowRaw] = useState(false);
+  const [tab, setTab] = useState("fields"); // fields | raw | activity
+  const [activity, setActivity] = useState(null); // null=unloaded, []=empty, [...]
+  const [activityBusy, setActivityBusy] = useState(false);
   const [reauthPwd, setReauthPwd] = useState("");
   const [reauthBusy, setReauthBusy] = useState(false);
   const [reauthErr, setReauthErr] = useState("");
   const [sensitive, setSensitive] = useState(false);
   const [sensBusy, setSensBusy] = useState(false);
   useEffect(() => { setSensitive(!!doc?.effective_sensitive); }, [doc?.id, doc?.effective_sensitive]);
+  useEffect(() => { setActivity(null); }, [doc?.id]);
+  useEffect(() => {
+    if (tab !== "activity" || activity !== null || !doc?.id) return;
+    let alive = true;
+    setActivityBusy(true);
+    authFetch(`/api/documents/${doc.id}/audit`, { cache: "no-store" })
+      .then((r) => (r.ok ? r.json() : []))
+      .then((rows) => { if (alive) setActivity(Array.isArray(rows) ? rows : []); })
+      .catch(() => { if (alive) setActivity([]); })
+      .finally(() => { if (alive) setActivityBusy(false); });
+    return () => { alive = false; };
+  }, [tab, activity, doc?.id, authFetch]);
 
   const isImage = (doc?.mime_type || "").startsWith("image/");
   const isPdf = (doc?.mime_type || "") === "application/pdf";
@@ -87,7 +158,7 @@ function PreviewPane({ doc, onDeleted }) {
     if (!doc) return () => {};
     let revoked = false, url = null;
     setPreviewState("loading");
-    setShowRaw(false);
+    setTab("fields");
     authFetch(`/api/documents/${doc.id}/file`, { cache: "no-store" })
       .then(async (res) => {
         if (res.status === 404) { setPreviewState("missing"); return null; }
@@ -274,11 +345,12 @@ function PreviewPane({ doc, onDeleted }) {
 
         {/* Toggle */}
         <div style={{ display: "flex", gap: "6px", marginBottom: "14px" }}>
-          <button onClick={() => setShowRaw(false)} style={segBtn(!showRaw)}>Fields</button>
-          <button onClick={() => setShowRaw(true)} style={segBtn(showRaw)} title={rawText ? "" : "No extracted text on this document"}>Raw text</button>
+          <button onClick={() => setTab("fields")} style={segBtn(tab === "fields")}>Fields</button>
+          <button onClick={() => setTab("raw")} style={segBtn(tab === "raw")} title={rawText ? "" : "No extracted text on this document"}>Raw text</button>
+          <button onClick={() => setTab("activity")} style={segBtn(tab === "activity")}>Activity</button>
         </div>
 
-        {!showRaw ? (
+        {tab === "fields" ? (
           <div key="fields" className="cv-fade" style={{ display: "flex", flexDirection: "column", gap: "11px" }}>
             {/* Vendor headline with legal entity demoted */}
             {brand && (
@@ -301,9 +373,32 @@ function PreviewPane({ doc, onDeleted }) {
             )}
             <div style={{ marginTop: "4px", fontSize: "9px", fontFamily: T.font.mono, letterSpacing: "0.08em", color: T.text.faint, textTransform: "uppercase" }}>Extracted by AI</div>
           </div>
-        ) : (
+        ) : tab === "raw" ? (
           <div key="raw" className="cv-fade" style={{ fontSize: "11px", fontFamily: T.font.mono, color: T.text.secondary, whiteSpace: "pre-wrap", wordBreak: "break-word", lineHeight: 1.6 }}>
             {rawText || <span style={{ color: T.text.faint }}>No extracted text stored for this document.</span>}
+          </div>
+        ) : (
+          <div key="activity" className="cv-fade" style={{ display: "flex", flexDirection: "column", gap: "10px" }}>
+            {activityBusy && <span style={{ fontSize: "12px", fontFamily: T.font.mono, color: T.text.muted }}>Loading activity…</span>}
+            {!activityBusy && activity && activity.length === 0 && (
+              <span style={{ fontSize: "12px", fontFamily: T.font.mono, color: T.text.faint }}>No activity recorded yet.</span>
+            )}
+            {!activityBusy && activity && groupActivity(activity).map((e) => (
+              <div key={e.id} style={{ display: "flex", justifyContent: "space-between", gap: "16px", alignItems: "baseline" }}>
+                <span style={{ display: "flex", alignItems: "center", gap: "8px", minWidth: 0 }}>
+                  <span style={{ width: "6px", height: "6px", borderRadius: "50%", flexShrink: 0, background: EVENT_META[e.event_type]?.color || T.text.faint }} />
+                  <span style={{ minWidth: 0 }}>
+                    <span style={{ fontSize: "12px", color: T.text.primary, display: "block" }}>
+                      {EVENT_META[e.event_type]?.label || e.event_type}
+                      {e.count > 1 && <span style={{ fontSize: "10px", fontFamily: T.font.mono, color: T.text.faint, marginLeft: "6px" }}>×{e.count}</span>}
+                    </span>
+                    {e.device && <span style={{ fontSize: "10px", fontFamily: T.font.mono, color: T.text.faint, display: "block", marginTop: "2px" }}>{friendlyDevice(e.device)}</span>}
+                  </span>
+                </span>
+                <span style={{ fontSize: "11px", fontFamily: T.font.mono, color: T.text.muted, whiteSpace: "nowrap" }}>{fmtWhen(e.created_at)}</span>
+              </div>
+            ))}
+            <div style={{ marginTop: "4px", fontSize: "9px", fontFamily: T.font.mono, letterSpacing: "0.08em", color: T.text.faint, textTransform: "uppercase" }}>Access log · this device & IP recorded</div>
           </div>
         )}
       </div>

@@ -3,7 +3,7 @@
 # PhRedSec™ | api/routes/auth.py
 # ─────────────────────────────────────────
 
-from fastapi import APIRouter, Depends, HTTPException, status
+from fastapi import APIRouter, Depends, HTTPException, status, Request
 from sqlalchemy.orm import Session
 from pydantic import BaseModel, EmailStr
 from datetime import datetime, timedelta
@@ -27,6 +27,7 @@ from app.models.user import User
 from app.models.refresh_token import RefreshToken
 from app.services.totp_service import generate_secret, qr_data_uri, verify_code
 from app.services import recovery_service
+from app.services import audit_service
 
 router = APIRouter(prefix="/auth", tags=["auth"])
 settings = get_settings()
@@ -234,6 +235,7 @@ def refresh(payload: RefreshRequest, db: Session = Depends(get_db)):
 @router.post("/sensitive/reauth")
 def sensitive_reauth(
     payload: SensitiveReauthRequest,
+    request: Request,
     db: Session = Depends(get_db),
     current_user: User = Depends(get_current_user),
 ):
@@ -241,6 +243,7 @@ def sensitive_reauth(
     if not verify_password(payload.password, current_user.hashed_password):
         raise HTTPException(status_code=401, detail="Incorrect password.")
     grant = create_sensitive_grant(current_user.id)
+    audit_service.log_event(db, current_user.id, audit_service.SENSITIVE_ACCESS, request=request)
     return {"sensitive_grant": grant}
 
 

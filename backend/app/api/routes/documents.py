@@ -3,7 +3,7 @@
 # PhRedSec™ | api/routes/documents.py
 # ─────────────────────────────────────────
 
-from fastapi import APIRouter, Depends, HTTPException, UploadFile, File, Response, Header
+from fastapi import APIRouter, Depends, HTTPException, UploadFile, File, Response, Header, Request
 from app.core.auth import verify_sensitive_grant
 from sqlalchemy.orm import Session
 
@@ -15,6 +15,8 @@ from app.services.storage_service import save_file, get_file
 from app.services.sensitive_detector import detect_sensitive
 from app.services.document_processor import classify_and_extract
 from app.services.collection_router import route_document_to_collections
+from app.services import audit_service
+from app.models.audit_event import AuditEvent
 
 router = APIRouter(prefix="/documents", tags=["documents"])
 
@@ -31,6 +33,7 @@ MAX_FILE_SIZE = 10 * 1024 * 1024
 
 @router.post("/upload")
 async def upload_document(
+    request: Request,
     file: UploadFile = File(...),
     db: Session = Depends(get_db),
     current_user: User = Depends(get_current_user),
@@ -80,6 +83,7 @@ async def upload_document(
     db.commit()
     db.refresh(doc)
     route_document_to_collections(db, doc.id, doc.document_type, source="AI")
+    audit_service.log_event(db, current_user.id, audit_service.DOCUMENT_UPLOAD, document_id=doc.id, request=request)
 
     return {
         "message": "Document uploaded and processed successfully.",
@@ -195,6 +199,7 @@ def get_stats(
 @router.delete("/{document_id}")
 def delete_document(
     document_id: int,
+    request: Request,
     db: Session = Depends(get_db),
     current_user: User = Depends(get_current_user),
 ):
@@ -206,6 +211,7 @@ def delete_document(
     if not doc:
         raise HTTPException(status_code=404, detail="Document not found.")
 
+    audit_service.log_event(db, current_user.id, audit_service.DELETE, document_id=doc.id, request=request)
     db.delete(doc)
     current_user.documents_used = max(0, current_user.documents_used - 1)
     db.commit()
@@ -269,6 +275,7 @@ def list_documents(
 @router.get("/{document_id}/file")
 def get_document_file(
     document_id: int,
+    request: Request,
     download: bool = False,
     x_sensitive_grant: str = Header(default=""),
     db: Session = Depends(get_db),
@@ -312,4 +319,40 @@ def get_document_file(
         "Pragma": "no-cache",
         "Expires": "0",
     }
+    audit_service.log_event(
+        db, current_user.id,
+        audit_service.DOCUMENT_DOWNLOAD if download else audit_service.DOCUMENT_VIEW,
+        document_id=doc.id, request=request,
+    )
     return Response(content=file_bytes, media_type=media_type, headers=headers)
+
+
+@router.get("/{document_id}/audit")
+def get_document_audit(
+    document_id: int,
+    db: Session = Depends(get_db),
+    current_user: User = Depends(get_current_user),
+):
+    """Return this document's audit timeline, newest first."""
+    doc = (
+        db.query(Document)
+        .filter(Document.id == document_id, Document.user_id == current_user.id)
+        .first()
+    )
+    if not doc:
+        raise HTTPException(status_code=404, detail="Document not found.")
+    events = (
+        db.query(AuditEvent)
+        .filter(AuditEvent.document_id == document_id, AuditEvent.user_id == current_user.id)
+        .order_by(AuditEvent.id.desc())
+        .all()
+    )
+    return [
+        {
+            "id": e.id,
+            "event_type": e.event_type,
+            "device": e.device,
+            "created_at": e.created_at,
+        }
+        for e in events
+    ]

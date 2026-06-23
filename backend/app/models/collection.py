@@ -9,7 +9,7 @@
 # ─────────────────────────────────────────
 from sqlalchemy import Column, Integer, String, Boolean, DateTime, Text, ForeignKey, UniqueConstraint
 from sqlalchemy.sql import func
-from sqlalchemy.orm import relationship
+from sqlalchemy.orm import relationship, backref
 from app.core.database import Base
 
 
@@ -44,4 +44,7 @@ class DocumentCollection(Base):
     created_at = Column(DateTime(timezone=True), server_default=func.now())
 
     collection = relationship("Collection", back_populates="document_links")
-    document = relationship("Document", backref="collection_links")
+    document = relationship(
+        "Document",
+        backref=backref("collection_links", cascade="all, delete-orphan", passive_deletes=True),
+    )
