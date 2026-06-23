@@ -252,6 +252,26 @@ function PreviewPane({ doc, onDeleted }) {
           <span style={{ fontSize: "22px", fontWeight: 700, fontFamily: T.font.mono, fontVariantNumeric: "tabular-nums", color: doc.total_amount != null ? T.semantic.success : T.text.faint }}>{doc.total_amount != null ? fmtFull(doc.total_amount) : "—"}</span>
         </div>
 
+        {/* Security facts — honest, real states only */}
+        <div style={{ background: T.card, border: T.border.hairline, borderRadius: "10px", padding: "14px 16px", marginBottom: "18px" }}>
+          <div style={{ fontSize: "10px", fontFamily: T.font.mono, letterSpacing: "0.1em", color: T.text.faint, textTransform: "uppercase", marginBottom: "12px" }}>Security</div>
+          {[
+            doc.is_encrypted && { label: "Encrypted at rest", value: "AES-256-GCM", ok: true },
+            doc.is_encrypted && { label: "Storage region", value: "Asia Pacific", ok: true },
+            doc.is_encrypted === false && { label: "Stored file", value: "Not stored", ok: false },
+            doc.effective_sensitive && { label: "Access", value: "Re-auth required", ok: true },
+            { label: "Uploaded", value: doc.created_at ? new Date(doc.created_at).toLocaleDateString("en-IN", { day: "2-digit", month: "short", year: "numeric" }) : "—", ok: null },
+          ].filter(Boolean).map((row, i) => (
+            <div key={i} style={{ display: "flex", alignItems: "center", justifyContent: "space-between", gap: "12px", padding: "5px 0" }}>
+              <span style={{ fontSize: "11px", color: T.text.muted }}>{row.label}</span>
+              <span style={{ display: "flex", alignItems: "center", gap: "6px", fontSize: "11px", fontFamily: T.font.mono, color: row.ok === false ? T.text.faint : T.text.secondary }}>
+                {row.ok === true && <span style={{ width: "6px", height: "6px", borderRadius: "50%", background: T.semantic.success, flexShrink: 0 }} />}
+                {row.value}
+              </span>
+            </div>
+          ))}
+        </div>
+
         {/* Toggle */}
         <div style={{ display: "flex", gap: "6px", marginBottom: "14px" }}>
           <button onClick={() => setShowRaw(false)} style={segBtn(!showRaw)}>Fields</button>

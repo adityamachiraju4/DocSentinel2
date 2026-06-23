@@ -86,6 +86,7 @@ def collection_documents(
                 "processing_status": d.processing_status,
                 "created_at": d.created_at,
                 "effective_sensitive": d.effective_sensitive,
+                "is_encrypted": bool(d.r2_key),
             }
             for d in docs
         ],
