@@ -4,6 +4,7 @@
 // ─────────────────────────────────────────
 
 import { useState, useEffect, useRef } from "react";
+import { useAuth } from '../../hooks/useAuth.jsx';
 
 const T = {
   bg: { base: "#07080A", panel: "#0D0E11", card: "linear-gradient(180deg, #17181C 0%, #121317 100%)" },
@@ -61,6 +62,7 @@ function validateFile(file) {
 }
 
 export default function Vault() {
+  const { authFetch } = useAuth();
   const [documents, setDocuments] = useState([]);
   const [queue, setQueue] = useState([]); // [{ id, name, size, status, error }]
   const [batchActive, setBatchActive] = useState(false);
@@ -69,13 +71,12 @@ export default function Vault() {
   const fileInputRef = useRef(null);
   const uidRef = useRef(0);
 
-  const token = localStorage.getItem("token");
 
   useEffect(() => { fetchDocuments(); }, []);
 
   async function fetchDocuments() {
     try {
-      const res = await fetch(`${API}/api/documents/`, { headers: { Authorization: `Bearer ${token}` } });
+      const res = await authFetch(`/api/documents/`);
       const data = await res.json();
       setDocuments(data.documents || []);
     } catch (err) { setError("Failed to load documents."); }
@@ -87,7 +88,7 @@ export default function Vault() {
     const formData = new FormData();
     formData.append("file", item.file);
     try {
-      const res = await fetch(`${API}/api/documents/upload`, { method: "POST", headers: { Authorization: `Bearer ${token}` }, body: formData });
+      const res = await authFetch(`/api/documents/upload`, { method: "POST", body: formData });
       const data = await res.json();
       if (!res.ok) {
         setQueue((q) => q.map((x) => (x.id === item.id ? { ...x, status: "failed", error: data.detail || "Upload failed" } : x)));
@@ -141,7 +142,7 @@ export default function Vault() {
   async function deleteDocument(id) {
     if (!window.confirm("Delete this document? This cannot be undone.")) return;
     try {
-      const res = await fetch(`${API}/api/documents/${id}`, { method: "DELETE", headers: { Authorization: `Bearer ${token}` } });
+      const res = await authFetch(`/api/documents/${id}`, { method: "DELETE" });
       if (!res.ok) throw new Error("Delete failed");
       fetchDocuments();
     } catch (err) { setError("Failed to delete document."); }

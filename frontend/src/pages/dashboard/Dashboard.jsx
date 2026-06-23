@@ -3,6 +3,7 @@ import {
   BarChart, Bar, XAxis, YAxis, CartesianGrid, Tooltip,
   ResponsiveContainer, PieChart, Pie, Cell,
 } from "recharts";
+import { useAuth } from '../../hooks/useAuth.jsx';
 
 const T = {
   bg: { base: "#07080A", panel: "#0D0E11", card: "linear-gradient(180deg, #17181C 0%, #121317 100%)" },
@@ -105,6 +106,7 @@ function Panel({ chrome, title, right, children }) {
 }
 
 export default function Dashboard() {
+  const { authFetch } = useAuth();
   const [stats, setStats] = useState(null);
   const [loading, setLoading] = useState(true);
   const [error, setError] = useState(null);
@@ -113,8 +115,7 @@ export default function Dashboard() {
   useEffect(() => {
     async function fetchStats() {
       try {
-        const token = localStorage.getItem("token") || "";
-        const res = await fetch(`${API}/api/documents/stats`, { headers: { Authorization: `Bearer ${token}`, "Content-Type": "application/json" } });
+        const res = await authFetch(`/api/documents/stats`, { headers: { "Content-Type": "application/json" } });
         if (!res.ok) throw new Error(`Request failed (${res.status})`);
         setStats(await res.json());
       } catch (err) {

@@ -121,6 +121,7 @@ export default function Login() {
   const [form, setForm] = useState({ email: '', password: '' })
   const [error, setError] = useState('')
   const [loading, setLoading] = useState(false)
+  const [publicDevice, setPublicDevice] = useState(false)
 
   // 2FA two-call flow state
   const [stage, setStage] = useState('password')   // 'password' | 'totp'
@@ -135,7 +136,7 @@ export default function Login() {
   const handleChange = (e) => { setForm({ ...form, [e.target.name]: e.target.value }); setError('') }
 
   const finishLogin = (data) => {
-    login(data.user, data.access_token, data.refresh_token)
+    login(data.user, data.access_token, data.refresh_token, publicDevice)
     navigate('/dashboard')
   }
 
@@ -259,6 +260,22 @@ export default function Login() {
                     <input type="password" name="password" value={form.password} onChange={handleChange} required placeholder="••••••••"
                       style={inputStyle} onFocus={focusOn} onBlur={focusOff} />
                   </div>
+
+                  <label style={{ display: 'flex', alignItems: 'flex-start', gap: 10, cursor: 'pointer', userSelect: 'none' }}>
+                    <input
+                      type="checkbox"
+                      checked={publicDevice}
+                      onChange={e => { setPublicDevice(e.target.checked); setError('') }}
+                      style={{ width: 16, height: 16, marginTop: 1, accentColor: T.accent.violet, cursor: 'pointer', flexShrink: 0 }}
+                    />
+                    <span style={{ fontFamily: T.font.sans, fontSize: '0.82rem', color: T.text.secondary, lineHeight: 1.4 }}>
+                      This is a public or shared device
+                      <span style={{ display: 'block', fontFamily: T.font.mono, fontSize: '0.68rem', color: T.text.faint, marginTop: 2 }}>
+                        Don't keep me signed in — session ends when the tab closes.
+                      </span>
+                    </span>
+                  </label>
+
                   <button type="submit" disabled={loading} className="ds-submit"
                     style={{ fontFamily: T.font.sans, fontWeight: 600, fontSize: '0.95rem', background: loading ? T.bg.panel : T.accent.violet, color: loading ? T.text.muted : '#FFF', border: loading ? `1px solid ${T.border.strong}` : 'none', borderRadius: 8, padding: '13px', cursor: loading ? 'not-allowed' : 'pointer', transition: 'transform 0.12s, box-shadow 0.18s', marginTop: 4 }}>
                     {loading ? 'Signing in…' : 'Sign in'}

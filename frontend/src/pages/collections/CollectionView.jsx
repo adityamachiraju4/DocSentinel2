@@ -1,5 +1,6 @@
 import { useEffect, useState, useMemo, useCallback, useRef } from "react";
 import { useParams } from "react-router-dom";
+import { useAuth } from '../../hooks/useAuth.jsx';
 
 const API = import.meta.env.VITE_API_URL || "http://localhost:8000";
 
@@ -21,7 +22,6 @@ const TYPE_COLORS = {
 };
 
 const fmtFull = (n) => "₹" + Number(n).toLocaleString("en-IN", { maximumFractionDigits: 0 });
-const authHeader = () => ({ Authorization: `Bearer ${localStorage.getItem("token")}` });
 
 const META_FIELDS = [
   { key: "vendor_name", label: "Vendor" },
@@ -67,6 +67,7 @@ function deriveVendor(raw) {
 /* ============================ Preview pane (hero) ============================ */
 
 function PreviewPane({ doc, onDeleted }) {
+  const { authFetch } = useAuth();
   const [blobUrl, setBlobUrl] = useState(null);
   const [previewState, setPreviewState] = useState("loading"); // loading | ready | error | missing
   const [showRaw, setShowRaw] = useState(false);
@@ -81,7 +82,7 @@ function PreviewPane({ doc, onDeleted }) {
     let revoked = false, url = null;
     setPreviewState("loading");
     setShowRaw(false);
-    fetch(`${API}/api/documents/${doc.id}/file`, { headers: authHeader() })
+    authFetch(`/api/documents/${doc.id}/file`)
       .then((res) => {
         if (res.status === 404) { setPreviewState("missing"); return null; }
         return res.ok ? res.blob() : Promise.reject();
@@ -97,7 +98,7 @@ function PreviewPane({ doc, onDeleted }) {
   }, [doc?.id]);
 
   function handleDownload() {
-    fetch(`${API}/api/documents/${doc.id}/file?download=true`, { headers: authHeader() })
+    authFetch(`/api/documents/${doc.id}/file?download=true`)
       .then((res) => res.blob())
       .then((blob) => {
         const url = URL.createObjectURL(blob);
@@ -113,7 +114,7 @@ function PreviewPane({ doc, onDeleted }) {
 
   function handleDelete() {
     if (!window.confirm(`Delete ${doc.filename}? This can't be undone.`)) return;
-    fetch(`${API}/api/documents/${doc.id}`, { method: "DELETE", headers: authHeader() })
+    authFetch(`/api/documents/${doc.id}`, { method: "DELETE" })
       .then((res) => { if (res.ok) onDeleted(doc.id); });
   }
 
@@ -256,6 +257,7 @@ function SortHeader({ label, field, sort, setSort, align = "left" }) {
 /* ============================ Page ============================ */
 
 export default function CollectionView() {
+  const { authFetch } = useAuth();
   const { slug } = useParams();
   const [data, setData] = useState(null);
   const [loading, setLoading] = useState(true);
@@ -266,7 +268,7 @@ export default function CollectionView() {
 
   useEffect(() => {
     setLoading(true); setSelected(null); setQuery("");
-    fetch(`${API}/api/collections/${slug}/documents`, { headers: authHeader() })
+    authFetch(`/api/collections/${slug}/documents`)
       .then((res) => (res.ok ? res.json() : null))
       .then((d) => { setData(d); setLoading(false); })
       .catch(() => { setData(null); setLoading(false); });

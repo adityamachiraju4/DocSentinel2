@@ -35,14 +35,12 @@ const COLLECTION_ICONS = {
 const FALLBACK_ICON = COLLECTION_ICONS.other;
 
 export default function DashboardLayout() {
-  const { user, logout } = useAuth();
+  const { user, logout, authFetch } = useAuth();
   const navigate = useNavigate();
   const [collections, setCollections] = useState([]);
 
   useEffect(() => {
-    const token = localStorage.getItem("token");
-    if (!token) return;
-    fetch(`${API}/api/collections/`, { headers: { Authorization: `Bearer ${token}` } })
+    authFetch(`/api/collections/`)
       .then((res) => (res.ok ? res.json() : []))
       .then((data) => setCollections(Array.isArray(data) ? data : []))
       .catch(() => setCollections([]));
