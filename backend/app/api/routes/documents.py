@@ -52,6 +52,8 @@ async def upload_document(
             detail="File too large. Maximum size is 10MB."
         )
 
+    import hashlib
+    sha256_hash = hashlib.sha256(file_bytes).hexdigest()
     storage_key = save_file(file_bytes, file.filename)
 
     extracted = classify_and_extract(file_bytes, file.filename, file.content_type)
@@ -63,6 +65,7 @@ async def upload_document(
         file_size=len(file_bytes),
         mime_type=file.content_type,
         r2_key=storage_key,
+        sha256=sha256_hash,
         document_type=extracted.get("document_type"),
         module=extracted.get("module"),
         vendor_name=extracted.get("vendor_name"),
@@ -240,6 +243,7 @@ def set_sensitive_override(
         "is_sensitive": doc.is_sensitive,
         "sensitive_override": doc.sensitive_override,
         "effective_sensitive": doc.effective_sensitive,
+        "sha256": doc.sha256,
     }
 
 

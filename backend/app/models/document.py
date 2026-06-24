@@ -21,6 +21,7 @@ class Document(Base):
     file_size = Column(Integer, nullable=True)
     mime_type = Column(String, nullable=True)
     r2_key = Column(String, nullable=True)
+    sha256 = Column(String, nullable=True)
 
     # Classification
     document_type = Column(String, nullable=True)

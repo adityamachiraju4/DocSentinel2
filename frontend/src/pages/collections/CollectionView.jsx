@@ -331,6 +331,7 @@ function PreviewPane({ doc, onDeleted }) {
             doc.is_encrypted && { label: "Storage region", value: "Asia Pacific", ok: true },
             doc.is_encrypted === false && { label: "Stored file", value: "Not stored", ok: false },
             doc.effective_sensitive && { label: "Access", value: "Re-auth required", ok: true },
+            doc.sha256 && { label: "Integrity", value: "SHA-256 " + doc.sha256.slice(0, 12) + "\u2026", ok: true },
             { label: "Uploaded", value: doc.created_at ? new Date(doc.created_at).toLocaleDateString("en-IN", { day: "2-digit", month: "short", year: "numeric" }) : "—", ok: null },
           ].filter(Boolean).map((row, i) => (
             <div key={i} style={{ display: "flex", alignItems: "center", justifyContent: "space-between", gap: "12px", padding: "5px 0" }}>
