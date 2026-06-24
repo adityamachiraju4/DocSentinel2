@@ -38,7 +38,7 @@ export function AuthProvider({ children }) {
   }, [])
 
   // publicDevice=true → session-only: use sessionStorage, drop the refresh token.
-  const login = (userData, accessToken, refreshToken, publicDevice = false) => {
+  const login = (userData, accessToken, refreshToken, publicDevice = false, familyId = null) => {
     // Record the mode flag in localStorage so it survives even when the
     // session itself lives in sessionStorage, and so sessionStore() can read it.
     if (publicDevice) {
@@ -52,6 +52,7 @@ export function AuthProvider({ children }) {
     store.setItem('user', JSON.stringify(userData))
     // No refresh token on public/shared devices — session expires with the access token.
     if (refreshToken && !publicDevice) store.setItem('refresh_token', refreshToken)
+    if (familyId) store.setItem('family_id', familyId)
 
     setUser(userData)
   }
@@ -62,6 +63,7 @@ export function AuthProvider({ children }) {
       store.removeItem('token')
       store.removeItem('refresh_token')
       store.removeItem('user')
+      store.removeItem('family_id')
     }
     localStorage.removeItem(MODE_KEY)
     sensitiveGrant.current = null
@@ -103,6 +105,7 @@ export function AuthProvider({ children }) {
         const data = await res.json()
         store.setItem('token', data.access_token)
         store.setItem('refresh_token', data.refresh_token)
+        if (data.family_id) store.setItem('family_id', data.family_id)
         return data.access_token
       } catch {
         return null
@@ -154,8 +157,11 @@ export function AuthProvider({ children }) {
     return true
   }, [authFetch])
 
+  // Family id of the session on THIS device (set at login, updated on refresh).
+  const currentFamilyId = useCallback(() => sessionStore().getItem('family_id'), [])
+
   return (
-    <AuthContext.Provider value={{ user, loading, login, logout, authFetch, sensitiveReauth }}>
+    <AuthContext.Provider value={{ user, loading, login, logout, authFetch, sensitiveReauth, currentFamilyId }}>
       {children}
     </AuthContext.Provider>
   )

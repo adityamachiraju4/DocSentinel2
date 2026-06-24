@@ -17,7 +17,7 @@ const T = {
 };
 
 export default function Settings() {
-  const { user, authFetch } = useAuth();
+  const { user, authFetch, currentFamilyId } = useAuth();
 
   const [enabled, setEnabled] = useState(null); // null = loading
   const [remaining, setRemaining] = useState(null);
@@ -33,6 +33,10 @@ export default function Settings() {
 
   // recovery codes shown once (after confirm or regenerate)
   const [recoveryCodes, setRecoveryCodes] = useState(null);
+  // active sessions (refresh-token families)
+  const [sessions, setSessions] = useState(null); // null = loading
+  const [sessionsErr, setSessionsErr] = useState("");
+  const [revoking, setRevoking] = useState(null); // family_id being revoked
 
   async function refreshStatus() {
     try {
@@ -51,6 +55,64 @@ export default function Settings() {
   }
 
   useEffect(() => { refreshStatus(); }, []);
+
+  async function loadSessions() {
+    setSessionsErr("");
+    try {
+      const res = await authFetch(`${API}/api/auth/sessions`);
+      if (!res.ok) throw new Error("status " + res.status);
+      const data = await res.json();
+      setSessions(Array.isArray(data.sessions) ? data.sessions : []);
+    } catch (e) {
+      setSessionsErr("Could not load active sessions.");
+      setSessions([]);
+    }
+  }
+  useEffect(() => { loadSessions(); }, []);
+
+  async function revokeSession(familyId) {
+    setRevoking(familyId);
+    setSessionsErr("");
+    try {
+      const res = await authFetch(`${API}/api/auth/sessions/${familyId}/revoke`, { method: "POST" });
+      if (!res.ok) throw new Error("status " + res.status);
+      await loadSessions();
+    } catch (e) {
+      setSessionsErr("Could not revoke that session.");
+    } finally {
+      setRevoking(null);
+    }
+  }
+
+  // "Mozilla/5.0 (Macintosh...) Chrome/148..." -> "Chrome on macOS"
+  function friendlyDevice(ua) {
+    if (!ua) return "Unknown device";
+    let browser = "Browser";
+    if (/Edg\//.test(ua)) browser = "Edge";
+    else if (/Chrome\//.test(ua)) browser = "Chrome";
+    else if (/Safari\//.test(ua) && !/Chrome/.test(ua)) browser = "Safari";
+    else if (/Firefox\//.test(ua)) browser = "Firefox";
+    else if (/^curl\//.test(ua)) return "API / curl";
+    let os = "";
+    if (/Macintosh|Mac OS X/.test(ua)) os = "macOS";
+    else if (/Windows/.test(ua)) os = "Windows";
+    else if (/Android/.test(ua)) os = "Android";
+    else if (/iPhone|iPad/.test(ua)) os = "iOS";
+    else if (/Linux/.test(ua)) os = "Linux";
+    return os ? `${browser} on ${os}` : browser;
+  }
+
+  function fmtWhen(iso) {
+    if (!iso) return "—";
+    const z = /[Z+]/.test(iso) ? iso : iso + "Z";
+    const d = new Date(z);
+    const diff = (Date.now() - d.getTime()) / 1000;
+    if (diff < 60) return "just now";
+    if (diff < 3600) return `${Math.floor(diff / 60)}m ago`;
+    if (diff < 86400) return `${Math.floor(diff / 3600)}h ago`;
+    if (diff < 2592000) return `${Math.floor(diff / 86400)}d ago`;
+    return d.toLocaleDateString();
+  }
 
   async function startEnroll() {
     setErr(""); setCode(""); setBusy(true);
@@ -389,6 +451,78 @@ export default function Settings() {
           )}
         </section>
       )}
+
+      {/* Active sessions card */}
+      <section style={{
+        background: T.card, border: T.border.hairline, borderRadius: "10px",
+        padding: "24px", marginTop: "20px",
+      }}>
+        <div style={{ display: "flex", alignItems: "center", justifyContent: "space-between", marginBottom: "6px" }}>
+          <h2 style={{ fontSize: "15px", fontWeight: 600, color: T.text.primary, margin: 0 }}>
+            Active sessions
+          </h2>
+          <button onClick={loadSessions} style={btnGhost}>Refresh</button>
+        </div>
+        <p style={{ fontSize: "13px", color: T.text.secondary, lineHeight: 1.5, margin: "0 0 18px" }}>
+          Devices with an active session. Revoke any you don't recognise to sign them out.
+        </p>
+
+        {sessionsErr && (
+          <div style={{ color: T.semantic.error, fontSize: "12px", fontFamily: T.font.mono, margin: "0 0 14px" }}>{sessionsErr}</div>
+        )}
+
+        {sessions === null ? (
+          <div style={{ fontSize: "13px", color: T.text.muted }}>Loading…</div>
+        ) : sessions.length === 0 ? (
+          <div style={{ fontSize: "13px", color: T.text.muted }}>No active sessions.</div>
+        ) : (
+          <div style={{ display: "flex", flexDirection: "column", gap: "10px" }}>
+            {sessions.map((sess) => {
+              const isCurrent = currentFamilyId && sess.family_id === currentFamilyId();
+              return (
+                <div key={sess.family_id} style={{
+                  display: "flex", alignItems: "center", justifyContent: "space-between",
+                  background: T.bg.base, border: T.border.hairline, borderRadius: "8px",
+                  padding: "14px 16px",
+                }}>
+                  <div style={{ minWidth: 0 }}>
+                    <div style={{ display: "flex", alignItems: "center", gap: "8px" }}>
+                      <span style={{ fontSize: "13px", color: T.text.primary, fontWeight: 500 }}>
+                        {friendlyDevice(sess.device)}
+                      </span>
+                      {isCurrent && (
+                        <span style={{
+                          fontFamily: T.font.mono, fontSize: "9px", letterSpacing: "0.08em",
+                          padding: "2px 6px", borderRadius: "4px", color: T.semantic.success,
+                          border: "1px solid rgba(63,185,80,0.4)", backgroundColor: "rgba(63,185,80,0.08)",
+                        }}>THIS DEVICE</span>
+                      )}
+                    </div>
+                    <div style={{ fontSize: "11px", color: T.text.muted, fontFamily: T.font.mono, marginTop: "4px" }}>
+                      Last used {fmtWhen(sess.last_used_at || sess.created_at)}
+                    </div>
+                  </div>
+                  <button
+                    onClick={() => revokeSession(sess.family_id)}
+                    disabled={revoking === sess.family_id}
+                    style={{
+                      ...btnGhost,
+                      color: isCurrent ? T.text.muted : T.semantic.error,
+                      borderColor: isCurrent ? "rgba(255,255,255,0.14)" : "rgba(248,81,73,0.4)",
+                      whiteSpace: "nowrap",
+                    }}
+                  >
+                    {revoking === sess.family_id ? "Revoking…" : isCurrent ? "Sign out" : "Revoke"}
+                  </button>
+                </div>
+              );
+            })}
+          </div>
+        )}
+        <div style={{ fontSize: "10px", color: T.text.faint, fontFamily: T.font.mono, marginTop: "16px", letterSpacing: "0.04em" }}>
+          Device & IP recorded per session · IP stored hashed, never raw
+        </div>
+      </section>
     </div>
   );
 }

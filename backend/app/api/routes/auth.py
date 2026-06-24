@@ -5,6 +5,7 @@
 
 from fastapi import APIRouter, Depends, HTTPException, status, Request
 from sqlalchemy.orm import Session
+from sqlalchemy.sql import func
 from pydantic import BaseModel, EmailStr
 from datetime import datetime, timedelta
 
@@ -70,35 +71,40 @@ class RefreshRequest(BaseModel):
 
 # ── Helpers ───────────────────────────────
 
-def _issue_refresh(db: Session, user: User, family_id: str | None = None) -> str:
+def _issue_refresh(db: Session, user: User, family_id: str | None = None, request: Request | None = None) -> tuple[str, str]:
     """
     Mint a new opaque refresh token, persist only its hash, and return the
     raw value to hand to the client. Reuses family_id during rotation so a
     chain of tokens can be revoked together on reuse detection.
     """
     raw = generate_refresh_token()
+    fam = family_id or new_family_id()
     row = RefreshToken(
         user_id=user.id,
         token_hash=hash_refresh_token(raw),
-        family_id=family_id or new_family_id(),
+        family_id=fam,
         expires_at=refresh_token_expiry(),
         revoked=False,
+        device=audit_service._device(request) if request else None,
+        ip_hash=audit_service._hash_ip(audit_service._client_ip(request)) if request else None,
+        last_used_at=func.now(),
     )
     db.add(row)
     db.commit()
-    return raw
+    return raw, fam
 
 
-def _issue_access(db: Session, user: User) -> dict:
+def _issue_access(db: Session, user: User, request: Request | None = None) -> dict:
     """Build the standard authenticated login response (access + refresh)."""
     token = create_access_token(
         data={"sub": str(user.id)},
         expires_delta=timedelta(minutes=settings.ACCESS_TOKEN_EXPIRE_MINUTES),
     )
-    refresh = _issue_refresh(db, user)
+    refresh, family_id = _issue_refresh(db, user, request=request)
     return {
         "access_token": token,
         "refresh_token": refresh,
+        "family_id": family_id,
         "token_type": "bearer",
         "user": {
             "id": user.id,
@@ -135,7 +141,7 @@ def register(payload: RegisterRequest, db: Session = Depends(get_db)):
 # ── Login (step 1: password) ──────────────
 
 @router.post("/login")
-def login(payload: LoginRequest, db: Session = Depends(get_db)):
+def login(payload: LoginRequest, request: Request, db: Session = Depends(get_db)):
     user = db.query(User).filter(User.email == payload.email).first()
     if not user or not verify_password(payload.password, user.hashed_password):
         raise HTTPException(status_code=401, detail="Invalid email or password.")
@@ -152,13 +158,13 @@ def login(payload: LoginRequest, db: Session = Depends(get_db)):
         }
 
     # No 2FA → behave exactly as before.
-    return _issue_access(db, user)
+    return _issue_access(db, user, request=request)
 
 
 # ── Login (step 2: TOTP code) ─────────────
 
 @router.post("/login/verify")
-def login_verify(payload: LoginVerifyRequest, db: Session = Depends(get_db)):
+def login_verify(payload: LoginVerifyRequest, request: Request, db: Session = Depends(get_db)):
     """
     Exchange a valid pending token + current TOTP code for a real access token.
     """
@@ -178,13 +184,13 @@ def login_verify(payload: LoginVerifyRequest, db: Session = Depends(get_db)):
     if not ok:
         raise HTTPException(status_code=401, detail="Invalid code. Try again with a fresh code from your app, or a recovery code.")
 
-    return _issue_access(db, user)
+    return _issue_access(db, user, request=request)
 
 
 # ── Refresh (rotate access + refresh) ─────
 
 @router.post("/refresh")
-def refresh(payload: RefreshRequest, db: Session = Depends(get_db)):
+def refresh(payload: RefreshRequest, request: Request, db: Session = Depends(get_db)):
     """
     Exchange a valid refresh token for a new access + refresh pair (rotation).
     Presenting a revoked/already-used token is treated as theft: the whole
@@ -221,11 +227,12 @@ def refresh(payload: RefreshRequest, db: Session = Depends(get_db)):
         data={"sub": str(user.id)},
         expires_delta=timedelta(minutes=settings.ACCESS_TOKEN_EXPIRE_MINUTES),
     )
-    new_refresh = _issue_refresh(db, user, family_id=row.family_id)
+    new_refresh, family_id = _issue_refresh(db, user, family_id=row.family_id, request=request)
 
     return {
         "access_token": new_access,
         "refresh_token": new_refresh,
+        "family_id": family_id,
         "token_type": "bearer",
     }
 
@@ -256,6 +263,60 @@ def logout(db: Session = Depends(get_db), current_user: User = Depends(get_curre
     ).update({RefreshToken.revoked: True})
     db.commit()
     return {"message": "Logged out."}
+
+
+# ── Session / device manager ──────────────
+@router.get("/sessions")
+def list_sessions(db: Session = Depends(get_db), current_user: User = Depends(get_current_user)):
+    """List active sessions (one per refresh-token family) for this user."""
+    now = datetime.utcnow()
+    rows = (
+        db.query(RefreshToken)
+        .filter(
+            RefreshToken.user_id == current_user.id,
+            RefreshToken.revoked == False,  # noqa: E712
+            RefreshToken.expires_at > now,
+        )
+        .order_by(RefreshToken.id.desc())
+        .all()
+    )
+    # Collapse to one entry per family: keep the newest row (highest id).
+    seen = {}
+    for r in rows:
+        if r.family_id not in seen:
+            seen[r.family_id] = r
+    sessions = [
+        {
+            "family_id": r.family_id,
+            "device": r.device,
+            "last_used_at": r.last_used_at.isoformat() if r.last_used_at else None,
+            "created_at": r.created_at.isoformat() if r.created_at else None,
+        }
+        for r in seen.values()
+    ]
+    return {"sessions": sessions}
+
+
+@router.post("/sessions/{family_id}/revoke")
+def revoke_session(
+    family_id: str,
+    db: Session = Depends(get_db),
+    current_user: User = Depends(get_current_user),
+):
+    """Burn an entire refresh-token family (sign that device out)."""
+    updated = (
+        db.query(RefreshToken)
+        .filter(
+            RefreshToken.user_id == current_user.id,
+            RefreshToken.family_id == family_id,
+            RefreshToken.revoked == False,  # noqa: E712
+        )
+        .update({RefreshToken.revoked: True})
+    )
+    db.commit()
+    if not updated:
+        raise HTTPException(status_code=404, detail="Session not found.")
+    return {"message": "Session revoked."}
 
 
 # ── Me (current user) ─────────────────────

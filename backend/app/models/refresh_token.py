@@ -16,4 +16,7 @@ class RefreshToken(Base):
     family_id = Column(String, index=True, nullable=False)                # ties rotated tokens together for reuse detection
     expires_at = Column(DateTime(timezone=True), nullable=False)
     revoked = Column(Boolean, default=False, nullable=False)              # kill switch: logout / 2FA disable / reuse
+    device = Column(String, nullable=True)                               # User-Agent string, truncated
+    ip_hash = Column(String, nullable=True)                              # sha256 of client IP, never raw (privacy/DPDP)
+    last_used_at = Column(DateTime(timezone=True), nullable=True)        # bumped on each rotation
     created_at = Column(DateTime(timezone=True), server_default=func.now())

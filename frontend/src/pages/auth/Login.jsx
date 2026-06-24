@@ -136,7 +136,7 @@ export default function Login() {
   const handleChange = (e) => { setForm({ ...form, [e.target.name]: e.target.value }); setError('') }
 
   const finishLogin = (data) => {
-    login(data.user, data.access_token, data.refresh_token, publicDevice)
+    login(data.user, data.access_token, data.refresh_token, publicDevice, data.family_id)
     navigate('/dashboard')
   }
 
