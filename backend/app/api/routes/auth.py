@@ -29,6 +29,8 @@ from app.models.refresh_token import RefreshToken
 from app.services.totp_service import generate_secret, qr_data_uri, verify_code
 from app.services import recovery_service
 from app.services import audit_service
+from app.services import notify_service
+from app.services import notify_service
 
 router = APIRouter(prefix="/auth", tags=["auth"])
 settings = get_settings()
@@ -251,6 +253,7 @@ def sensitive_reauth(
         raise HTTPException(status_code=401, detail="Incorrect password.")
     grant = create_sensitive_grant(current_user.id)
     audit_service.log_event(db, current_user.id, audit_service.SENSITIVE_ACCESS, request=request)
+    notify_service.notify(notify_service.SENSITIVE_ACCESS_GRANT, current_user.id)
     return {"sensitive_grant": grant}
 
 
