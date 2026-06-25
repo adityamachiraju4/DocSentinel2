@@ -10,6 +10,7 @@ import Register from './pages/auth/Register'
 // Main Pages
 import Landing from './pages/Landing'
 import DashboardLayout from './layouts/DashboardLayout'
+import SharedWithMe from './pages/SharedWithMe'
 import CollectionView from './pages/collections/CollectionView'
 import Dashboard from './pages/dashboard/Dashboard'
 // Module Pages
@@ -43,6 +44,7 @@ export default function App() {
       >
         <Route path="/dashboard" element={<Dashboard />} />
         <Route path="/vault" element={<Vault />} />
+        <Route path="/shared" element={<SharedWithMe />} />
         <Route path="/invoices" element={<Invoices />} />
         <Route path="/contracts" element={<Contracts />} />
         <Route path="/hr" element={<HR />} />
