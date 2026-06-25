@@ -51,6 +51,7 @@ class DocumentShare(Base):
     share_token_hash = Column(String, nullable=True, index=True)
 
     expires_at = Column(DateTime(timezone=True), nullable=True)
+    first_accessed_at = Column(DateTime(timezone=True), nullable=True)
     last_accessed_at = Column(DateTime(timezone=True), nullable=True)
     # Hashed only (SHA-256), never raw IP — DPDP-aligned. Populated when recipient read path exists.
     last_access_ip_hash = Column(String, nullable=True)
