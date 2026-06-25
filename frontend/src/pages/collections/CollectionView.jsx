@@ -135,8 +135,9 @@ function PreviewPane({ doc, onDeleted }) {
   const [reauthErr, setReauthErr] = useState("");
   const [sensitive, setSensitive] = useState(false);
   const [sensBusy, setSensBusy] = useState(false);
+  const [shareOpen, setShareOpen] = useState(false);
   useEffect(() => { setSensitive(!!doc?.effective_sensitive); }, [doc?.id, doc?.effective_sensitive]);
-  useEffect(() => { setActivity(null); }, [doc?.id]);
+  useEffect(() => { setActivity(null); setShareOpen(false); }, [doc?.id]);
   useEffect(() => {
     if (tab !== "activity" || activity !== null || !doc?.id) return;
     let alive = true;
@@ -208,6 +209,7 @@ function PreviewPane({ doc, onDeleted }) {
         setSensitive(eff);
         if (doc) doc.effective_sensitive = eff;
         if (eff) { setPreviewState("locked"); }
+        else { loadPreview(); }
       }
     } finally { setSensBusy(false); }
   }
@@ -261,7 +263,13 @@ function PreviewPane({ doc, onDeleted }) {
           </div>
           <div style={{ fontSize: "11px", fontFamily: T.font.mono, color: T.text.muted, whiteSpace: "nowrap", overflow: "hidden", textOverflow: "ellipsis" }}>{doc.filename}</div>
         </div>
-        <div style={{ display: "flex", gap: "8px", flexShrink: 0 }}>
+        <div style={{ display: "flex", gap: "8px", flexShrink: 0, position: "relative" }}>
+            {!doc.effective_sensitive && (
+              <button data-share-toggle onClick={() => setShareOpen((v) => !v)} title="Share access" style={{ ...iconBtn(true), color: shareOpen ? T.accent.bright : T.text.secondary, borderColor: shareOpen ? "rgba(124,92,255,0.35)" : undefined, background: shareOpen ? "rgba(124,92,255,0.12)" : "rgba(255,255,255,0.03)" }}>
+                <svg width="15" height="15" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round"><circle cx="18" cy="5" r="3" /><circle cx="6" cy="12" r="3" /><circle cx="18" cy="19" r="3" /><path d="M8.6 13.5l6.8 4M15.4 6.5l-6.8 4" /></svg>
+              </button>
+            )}
+            {shareOpen && <ShareDialog doc={doc} onClose={() => setShareOpen(false)} />}
           <button onClick={toggleSensitive} disabled={sensBusy} title={sensitive ? "Marked sensitive — click to unmark" : "Mark as sensitive"} style={{ ...iconBtn(true), color: sensitive ? T.semantic.error : T.text.muted, borderColor: sensitive ? "rgba(248,81,73,0.25)" : undefined }}>
             <svg width="15" height="15" viewBox="0 0 24 24" fill={sensitive ? "currentColor" : "none"} stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round"><path d="M12 22s8-4 8-10V5l-8-3-8 3v7c0 6 8 10 8 10z" /></svg>
           </button>
@@ -403,6 +411,170 @@ function PreviewPane({ doc, onDeleted }) {
           </div>
         )}
       </div>
+    </div>
+  );
+}
+
+/* ============================ Share dialog ============================ */
+
+function ShareDialog({ doc, onClose }) {
+  const { authFetch } = useAuth();
+  const ref = useRef(null);
+  const [email, setEmail] = useState("");
+  const [expiryDays, setExpiryDays] = useState(30); // 0 = never
+  const [shares, setShares] = useState(null); // null=loading, []=none, [...]
+  const [submitting, setSubmitting] = useState(false);
+  const [err, setErr] = useState("");
+  const emailValid = /^[^@\s]+@[^@\s]+\.[^@\s]+$/.test(email.trim());
+
+  const loadShares = useCallback(() => {
+    authFetch(`/api/documents/${doc.id}/shares`, { cache: "no-store" })
+      .then((r) => (r.ok ? r.json() : []))
+      .then((rows) => setShares(Array.isArray(rows) ? rows : []))
+      .catch(() => setShares([]));
+  }, [doc.id, authFetch]);
+
+  useEffect(() => { loadShares(); }, [loadShares]);
+
+  async function submitShare() {
+    if (!emailValid || submitting) return;
+    setSubmitting(true); setErr("");
+    try {
+      const body = {
+        recipient_email: email.trim().toLowerCase(),
+        permission: "VIEW",
+        expires_in_days: expiryDays > 0 ? expiryDays : null, // null = never
+      };
+      const res = await authFetch(`/api/documents/${doc.id}/shares`, {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify(body),
+      });
+      if (res.ok) { setEmail(""); loadShares(); }
+      else {
+        const b = await res.json().catch(() => ({}));
+        setErr(typeof b.detail === "string" ? b.detail : "Could not share.");
+      }
+    } catch { setErr("Could not share."); }
+    finally { setSubmitting(false); }
+  }
+
+  async function revokeShare(id) {
+    const res = await authFetch(`/api/documents/${doc.id}/shares/${id}`, { method: "DELETE" });
+    if (res.ok) loadShares();
+  }
+
+  // close on outside click + ESC
+  useEffect(() => {
+    function onDocClick(e) {
+      if (e.target.closest && e.target.closest("[data-share-toggle]")) return; // let the button's own handler toggle
+      if (ref.current && !ref.current.contains(e.target)) onClose();
+    }
+    function onEsc(e) { if (e.key === "Escape") onClose(); }
+    // defer click binding so the opening click doesn't immediately close it
+    const t = setTimeout(() => document.addEventListener("mousedown", onDocClick), 0);
+    document.addEventListener("keydown", onEsc);
+    return () => {
+      clearTimeout(t);
+      document.removeEventListener("mousedown", onDocClick);
+      document.removeEventListener("keydown", onEsc);
+    };
+  }, [onClose]);
+
+  return (
+    <div
+      ref={ref}
+      className="cv-fade"
+      style={{
+        position: "absolute", top: "calc(100% + 8px)", right: 0, zIndex: 50,
+        width: "320px", background: T.bg.panel, border: T.border.strong,
+        borderRadius: "12px", boxShadow: "0 12px 40px rgba(0,0,0,0.5)", padding: "16px",
+      }}
+    >
+      <div style={{ fontSize: "10px", fontFamily: T.font.mono, letterSpacing: "0.1em", color: T.text.faint, textTransform: "uppercase", marginBottom: "12px" }}>
+        Share access
+      </div>
+
+      {/* email input */}
+      <input
+        type="email"
+        placeholder="person@email.com"
+        value={email}
+        onChange={(e) => setEmail(e.target.value)}
+        autoFocus
+        style={{ width: "100%", boxSizing: "border-box", padding: "8px 10px", fontSize: "13px", fontFamily: T.font.mono, color: T.text.primary, background: T.bg.base, border: T.border.hairline, borderRadius: "8px", outline: "none", marginBottom: "12px" }}
+      />
+
+      {/* permission */}
+      <div style={{ fontSize: "10px", fontFamily: T.font.mono, letterSpacing: "0.08em", color: T.text.faint, textTransform: "uppercase", marginBottom: "6px" }}>Permission</div>
+      <div style={{ display: "flex", flexDirection: "column", gap: "4px", marginBottom: "12px" }}>
+        <div style={{ display: "flex", alignItems: "center", justifyContent: "space-between", padding: "7px 10px", borderRadius: "7px", background: "rgba(124,92,255,0.12)", border: "1px solid rgba(124,92,255,0.35)" }}>
+          <span style={{ fontSize: "12px", color: T.accent.bright }}>View</span>
+          <svg width="13" height="13" viewBox="0 0 24 24" fill="none" stroke={T.accent.bright} strokeWidth="2.5" strokeLinecap="round" strokeLinejoin="round"><path d="M20 6L9 17l-5-5" /></svg>
+        </div>
+        {["Comment", "Download"].map((p) => (
+          <div key={p} style={{ display: "flex", alignItems: "center", justifyContent: "space-between", padding: "7px 10px", borderRadius: "7px", border: T.border.hairline, opacity: 0.5 }}>
+            <span style={{ fontSize: "12px", color: T.text.muted }}>{p}</span>
+            <span style={{ fontSize: "9px", fontFamily: T.font.mono, letterSpacing: "0.05em", color: T.text.faint, textTransform: "uppercase" }}>Coming soon</span>
+          </div>
+        ))}
+      </div>
+
+      {/* expiry */}
+      <div style={{ fontSize: "10px", fontFamily: T.font.mono, letterSpacing: "0.08em", color: T.text.faint, textTransform: "uppercase", marginBottom: "6px" }}>Expires</div>
+      <div style={{ display: "flex", gap: "6px", marginBottom: "14px" }}>
+        {[{ label: "7 days", v: 7 }, { label: "30 days", v: 30 }, { label: "Never", v: 0 }].map((o) => {
+          const on = expiryDays === o.v;
+          return (
+            <div key={o.v} onClick={() => setExpiryDays(o.v)} style={{ flex: 1, textAlign: "center", padding: "7px 0", borderRadius: "7px", fontSize: "11px", fontFamily: T.font.mono, cursor: "pointer", background: on ? "rgba(124,92,255,0.12)" : "transparent", border: on ? "1px solid rgba(124,92,255,0.35)" : T.border.hairline, color: on ? T.accent.bright : T.text.muted }}>
+              {o.label}
+            </div>
+          );
+        })}
+      </div>
+
+      <button
+        disabled={!emailValid}
+        onClick={submitShare}
+        style={{ width: "100%", padding: "9px 0", fontSize: "12px", fontFamily: T.font.mono, color: T.text.primary, background: emailValid ? T.accent.violet : T.bg.base, border: emailValid ? "none" : T.border.hairline, borderRadius: "8px", cursor: emailValid ? "pointer" : "default" }}
+      >
+        {submitting ? "Sharing\u2026" : "Share"}
+      </button>
+      {err && <div style={{ marginTop: "8px", fontSize: "11px", fontFamily: T.font.mono, color: T.semantic.error }}>{err}</div>}
+
+      <div style={{ marginTop: "16px", fontSize: "10px", fontFamily: T.font.mono, letterSpacing: "0.1em", color: T.text.faint, textTransform: "uppercase", marginBottom: "8px" }}>
+        Shared with
+      </div>
+      {shares === null ? (
+        <div style={{ fontSize: "11px", fontFamily: T.font.mono, color: T.text.faint }}>Loading\u2026</div>
+      ) : shares.length === 0 ? (
+        <div style={{ fontSize: "11px", fontFamily: T.font.mono, color: T.text.faint }}>No one yet.</div>
+      ) : (
+        <div style={{ display: "flex", flexDirection: "column", gap: "8px" }}>
+          {shares.map((sh) => {
+            const st = (sh.status || "").toLowerCase();
+            const pill = st === "active"
+              ? { bg: "rgba(63,185,80,0.14)", bd: T.semantic.success + "40", fg: T.semantic.success, label: "Active" }
+              : st === "expired"
+              ? { bg: "rgba(210,153,34,0.14)", bd: T.semantic.warning + "40", fg: T.semantic.warning, label: "Expired" }
+              : { bg: "rgba(255,255,255,0.04)", bd: "rgba(255,255,255,0.1)", fg: T.text.faint, label: "Revoked" };
+            return (
+              <div key={sh.id} style={{ display: "flex", alignItems: "center", justifyContent: "space-between", gap: "10px" }}>
+                <div style={{ minWidth: 0 }}>
+                  <div style={{ fontSize: "12px", fontFamily: T.font.mono, color: T.text.secondary, whiteSpace: "nowrap", overflow: "hidden", textOverflow: "ellipsis" }}>{sh.recipient_email}</div>
+                  <div style={{ display: "flex", alignItems: "center", gap: "6px", marginTop: "3px" }}>
+                    <span style={{ fontSize: "9px", fontFamily: T.font.mono, letterSpacing: "0.04em", textTransform: "uppercase", padding: "1px 6px", borderRadius: "4px", background: pill.bg, border: `1px solid ${pill.bd}`, color: pill.fg }}>{pill.label}</span>
+                    <span style={{ fontSize: "9px", fontFamily: T.font.mono, color: T.text.faint }}>{sh.expires_at ? "exp " + new Date(sh.expires_at.endsWith("Z") ? sh.expires_at : sh.expires_at + "Z").toLocaleDateString("en-IN", { day: "2-digit", month: "short" }) : "no expiry"}</span>
+                  </div>
+                </div>
+                {st === "active" && (
+                  <button onClick={() => revokeShare(sh.id)} title="Revoke access" style={{ flexShrink: 0, fontSize: "10px", fontFamily: T.font.mono, color: T.semantic.error, background: "transparent", border: `1px solid ${T.semantic.error}40`, borderRadius: "6px", padding: "4px 8px", cursor: "pointer" }}>Revoke</button>
+                )}
+              </div>
+            );
+          })}
+        </div>
+      )}
     </div>
   );
 }
