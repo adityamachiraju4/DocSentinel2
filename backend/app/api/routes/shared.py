@@ -106,10 +106,13 @@ def list_shared_with_me(
         doc = db.query(Document).filter(Document.id == sh.document_id).first()
         if not doc or doc.effective_sensitive:
             continue  # sensitive docs never appear in a recipient's list
+        owner = db.query(User).filter(User.id == sh.owner_id).first()
         out.append({
             "share_id": sh.id,
             "document_id": sh.document_id,
             "filename": doc.original_filename,
+            "owner_email": owner.email if owner else None,
+            "document_type": doc.document_type,
             "permission": sh.permission,
             "shared_at": sh.created_at.isoformat() if sh.created_at else None,
             "expires_at": sh.expires_at.isoformat() if sh.expires_at else None,
