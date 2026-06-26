@@ -43,6 +43,7 @@ class Document(Base):
     is_sensitive = Column(Boolean, default=False, nullable=False)
     sensitive_override = Column(Boolean, nullable=True)
     extraction_method = Column(String, nullable=True)
+    confidence = Column(Text, nullable=True)  # JSON: deterministic confidence object
 
     # Timestamps
     created_at = Column(DateTime(timezone=True), server_default=func.now())

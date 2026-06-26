@@ -3,6 +3,7 @@ import base64
 import io
 import fitz  # PyMuPDF
 from groq import Groq
+from app.services.confidence import compute_confidence
 from app.core.config import get_settings
 
 settings = get_settings()
@@ -250,7 +251,7 @@ Return ONLY the JSON. No explanation. No markdown. No extra text."""
         return _empty_result("error")
 
 # ── Public entry point called from documents.py ───────────────────────────
-def classify_and_extract(file_bytes: bytes, filename: str, mime_type: str) -> dict:
+def _classify_and_extract_raw(file_bytes: bytes, filename: str, mime_type: str) -> dict:
     # Images → vision directly.
     if mime_type in ("image/jpeg", "image/jpg", "image/png"):
         return _extract_via_vision(file_bytes, mime_type, "groq_vision")
@@ -264,3 +265,11 @@ def classify_and_extract(file_bytes: bytes, filename: str, mime_type: str) -> di
 
     # Everything else (.txt and friends) → text path.
     return _extract_via_text(file_bytes, filename)
+
+
+def classify_and_extract(file_bytes: bytes, filename: str, mime_type: str) -> dict:
+    """Public entrypoint. Runs raw extraction, then attaches a deterministic,
+    explainable confidence object. Additive — existing keys unchanged."""
+    result = _classify_and_extract_raw(file_bytes, filename, mime_type)
+    result["confidence"] = compute_confidence(result)
+    return result

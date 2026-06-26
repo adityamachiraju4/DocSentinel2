@@ -1,3 +1,14 @@
+import json
+
+
+def _parse_confidence(raw):
+    """Deserialize a document's stored confidence JSON; None-safe."""
+    if not raw:
+        return None
+    try:
+        return json.loads(raw)
+    except (json.JSONDecodeError, TypeError):
+        return None
 # ─────────────────────────────────────────
 # DocSentinel v2 — Documents Routes
 # PhRedSec™ | api/routes/documents.py
@@ -76,6 +87,7 @@ async def upload_document(
         hsn_codes=extracted.get("hsn_codes"),
         tax_amount=extracted.get("tax_amount"),
         extraction_method=extracted.get("extraction_method"),
+        confidence=json.dumps(extracted.get("confidence")) if extracted.get("confidence") is not None else None,
         is_sensitive=detect_sensitive(extracted.get("raw_text")),
         processing_status="completed",
     )
@@ -98,6 +110,7 @@ async def upload_document(
             "total_amount": doc.total_amount,
             "invoice_date": doc.invoice_date,
             "processing_status": doc.processing_status,
+            "confidence": _parse_confidence(doc.confidence),
             "created_at": doc.created_at,
         }
     }
@@ -269,6 +282,7 @@ def list_documents(
                 "total_amount": d.total_amount,
                 "invoice_date": d.invoice_date,
                 "processing_status": d.processing_status,
+                "confidence": _parse_confidence(d.confidence),
                 "created_at": d.created_at,
             }
             for d in docs
