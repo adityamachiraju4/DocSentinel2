@@ -78,6 +78,8 @@ def _empty_result(method: str) -> dict:
         "tax_amount": None,
         "extraction_method": method,
         "raw_text": None,
+        "validation_status": "valid",
+        "original_document_type": None,
     }
 
 # ── Strip ```json fences if the model wraps its output ─────────────────────
@@ -108,7 +110,16 @@ def _validate(raw: dict, method: str) -> dict:
     result = _empty_result(method)
 
     dtype = str(raw.get("document_type") or "").lower().strip()
-    result["document_type"] = dtype if dtype in _VALID_TYPES else "other"
+    if dtype in _VALID_TYPES:
+        result["document_type"] = dtype
+        result["validation_status"] = "valid"
+    elif dtype:
+        result["document_type"] = "other"
+        result["validation_status"] = "invalid_document_type"
+        result["original_document_type"] = dtype
+    else:
+        result["document_type"] = "other"
+        result["validation_status"] = "missing_document_type"
 
     module = str(raw.get("module") or "").lower().strip()
     result["module"] = module if module in _VALID_MODULES else "general"
@@ -164,8 +175,10 @@ def _extract_via_vision(image_bytes: bytes, mime_type: str, method: str) -> dict
         response = client.chat.completions.create(
             model="meta-llama/llama-4-scout-17b-16e-instruct",
             messages=messages,
-            temperature=0.1,
+            temperature=0,
+            seed=42,
             max_tokens=1500,
+            response_format={"type": "json_object"},
         )
         result_text = _strip_fences(response.choices[0].message.content)
         raw = json.loads(result_text)
@@ -217,8 +230,10 @@ Return ONLY the JSON. No explanation. No markdown. No extra text."""
         response = client.chat.completions.create(
             model="llama-3.3-70b-versatile",
             messages=[{"role": "user", "content": prompt}],
-            temperature=0.1,
+            temperature=0,
+            seed=42,
             max_tokens=1500,
+            response_format={"type": "json_object"},
         )
         result_text = _strip_fences(response.choices[0].message.content)
         raw = json.loads(result_text)
