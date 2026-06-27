@@ -123,6 +123,26 @@ function groupActivity(rows) {
 
 /* ============================ Preview pane (hero) ============================ */
 
+// Maps META_FIELDS keys -> confidence.field_signals keys (only these three are scored)
+const FIELD_SIGNAL_KEY = { gstin: "gstin", invoice_date: "invoice_date", hsn_codes: "hsn_codes" };
+
+// Reads doc.confidence.field_signals[key] -> "valid" | "invalid" | "absent" | undefined.
+// Renders a badge only for valid/invalid; absent/unknown -> no badge (honest: no invented signal).
+function FieldBadge({ doc, fieldKey }) {
+  const sigKey = FIELD_SIGNAL_KEY[fieldKey];
+  if (!sigKey) return null;
+  const sig = doc?.confidence?.field_signals?.[sigKey];
+  if (sig !== "valid" && sig !== "invalid") return null;
+  const ok = sig === "valid";
+  const col = ok ? T.semantic.success : T.semantic.warning;
+  return (
+    <span style={{ display: "inline-flex", alignItems: "center", gap: "3px", fontSize: "9px", fontFamily: T.font.mono, color: col, letterSpacing: "0.04em", marginLeft: "6px", flexShrink: 0 }}>
+      <span aria-hidden="true">{ok ? "\u2713" : "\u26A0"}</span>
+      {ok ? "OK" : "Review"}
+    </span>
+  );
+}
+
 function PreviewPane({ doc, onDeleted }) {
   const { authFetch, sensitiveReauth } = useAuth();
   const [blobUrl, setBlobUrl] = useState(null);
@@ -248,7 +268,7 @@ function PreviewPane({ doc, onDeleted }) {
     .map((f) => {
       const raw = doc[f.key];
       if (raw == null || raw === "") return null;
-      return { label: f.label, value: f.money ? fmtFull(raw) : raw };
+      return { key: f.key, label: f.label, value: f.money ? fmtFull(raw) : raw };
     })
     .filter(Boolean);
 
@@ -373,7 +393,7 @@ function PreviewPane({ doc, onDeleted }) {
             )}
             {visibleFields.filter((f) => f.label !== "Vendor").map((f) => (
               <div key={f.label} style={{ display: "flex", justifyContent: "space-between", gap: "16px" }}>
-                <span style={{ fontSize: "11px", color: T.text.muted }}>{f.label}</span>
+                <span style={{ fontSize: "11px", color: T.text.muted, display: "inline-flex", alignItems: "center" }}>{f.label}<FieldBadge doc={doc} fieldKey={f.key} /></span>
                 <span style={{ fontSize: "12px", fontFamily: T.font.mono, color: T.text.secondary, textAlign: "right", wordBreak: "break-all" }}>{f.value}</span>
               </div>
             ))}
