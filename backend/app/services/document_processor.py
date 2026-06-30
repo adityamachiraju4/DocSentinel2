@@ -4,6 +4,7 @@ import io
 import fitz  # PyMuPDF
 from groq import Groq
 from app.services.confidence import compute_confidence
+from app.services.verification import build_field_metadata
 from app.core.config import get_settings
 
 settings = get_settings()
@@ -272,4 +273,5 @@ def classify_and_extract(file_bytes: bytes, filename: str, mime_type: str) -> di
     explainable confidence object. Additive — existing keys unchanged."""
     result = _classify_and_extract_raw(file_bytes, filename, mime_type)
     result["confidence"] = compute_confidence(result)
+    result["verification"] = build_field_metadata(result, result["confidence"])
     return result

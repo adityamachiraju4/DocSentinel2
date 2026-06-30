@@ -9,6 +9,21 @@ def _parse_confidence(raw):
         return json.loads(raw)
     except (json.JSONDecodeError, TypeError):
         return None
+
+def _verification_block(d):
+    """Expose verification state to the frontend; None-safe on field_metadata."""
+    fm = None
+    if d.field_metadata:
+        try:
+            fm = json.loads(d.field_metadata)
+        except (json.JSONDecodeError, TypeError):
+            fm = None
+    return {
+        "status": d.verification_status,
+        "verified_count": d.verified_fields_count,
+        "total": d.total_verifiable_fields,
+        "fields": fm or {},
+    }
 # ─────────────────────────────────────────
 # DocSentinel v2 — Documents Routes
 # PhRedSec™ | api/routes/documents.py
@@ -25,7 +40,9 @@ from app.models.document import Document
 from app.services.storage_service import save_file, get_file
 from app.services.sensitive_detector import detect_sensitive
 from app.services.document_processor import classify_and_extract
+from pydantic import BaseModel
 from app.services.collection_router import route_document_to_collections
+from app.services import verification as vrf
 from app.services import audit_service
 from app.models.audit_event import AuditEvent
 
@@ -88,6 +105,10 @@ async def upload_document(
         tax_amount=extracted.get("tax_amount"),
         extraction_method=extracted.get("extraction_method"),
         confidence=json.dumps(extracted.get("confidence")) if extracted.get("confidence") is not None else None,
+        field_metadata=json.dumps(extracted["verification"]["field_metadata"]),
+        verification_status=extracted["verification"]["verification_status"],
+        verified_fields_count=extracted["verification"]["verified_fields_count"],
+        total_verifiable_fields=extracted["verification"]["total_verifiable_fields"],
         is_sensitive=detect_sensitive(extracted.get("raw_text")),
         processing_status="completed",
     )
@@ -111,6 +132,7 @@ async def upload_document(
             "invoice_date": doc.invoice_date,
             "processing_status": doc.processing_status,
             "confidence": _parse_confidence(doc.confidence),
+            "verification": _verification_block(doc),
             "created_at": doc.created_at,
         }
     }
@@ -260,6 +282,190 @@ def set_sensitive_override(
     }
 
 
+from datetime import datetime, timezone
+
+
+class FieldUpdate(BaseModel):
+    value: object = None
+
+
+@router.patch("/{document_id}/fields/{field_name}")
+def update_field(
+    document_id: int,
+    field_name: str,
+    payload: FieldUpdate,
+    request: Request,
+    db: Session = Depends(get_db),
+    current_user: User = Depends(get_current_user),
+):
+    if field_name not in vrf.VERIFIABLE_FIELDS:
+        raise HTTPException(status_code=400, detail="Field is not verifiable.")
+    doc = (
+        db.query(Document)
+        .filter(Document.id == document_id, Document.user_id == current_user.id)
+        .first()
+    )
+    if not doc:
+        raise HTTPException(status_code=404, detail="Document not found.")
+
+    fm = json.loads(doc.field_metadata) if doc.field_metadata else {}
+    if field_name not in fm:
+        raise HTTPException(status_code=400, detail="Field was not extracted for this document.")
+
+    field = fm[field_name]
+    field["current_value"] = payload.value
+    field["last_modified_at"] = datetime.now(timezone.utc).isoformat()
+    # editing must never auto-verify
+    field["verified"] = False
+    field["verified_by"] = None
+    field["verified_at"] = None
+    fm[field_name] = field
+
+    verified_count = sum(1 for f in fm.values() if f.get("verified"))
+    doc.field_metadata = json.dumps(fm)
+    doc.verified_fields_count = verified_count
+    doc.verification_status = vrf.STATUS_NEEDS_REVIEW
+    db.commit()
+    db.refresh(doc)
+
+    audit_service.log_event(
+        db, current_user.id, vrf.EVENT_FIELD_CORRECTED,
+        document_id=doc.id, request=request,
+    )
+    return {"id": doc.id, "field": field_name, "verification": _verification_block(doc)}
+
+
+def _recompute_status(doc, fm):
+    verified_count = sum(1 for f in fm.values() if f.get("verified"))
+    doc.verified_fields_count = verified_count
+    if verified_count == doc.total_verifiable_fields and doc.total_verifiable_fields > 0:
+        doc.verification_status = vrf.STATUS_VERIFIED
+    else:
+        doc.verification_status = vrf.STATUS_NEEDS_REVIEW
+    return verified_count
+
+
+@router.post("/{document_id}/fields/{field_name}/verify")
+def verify_field(
+    document_id: int,
+    field_name: str,
+    request: Request,
+    db: Session = Depends(get_db),
+    current_user: User = Depends(get_current_user),
+):
+    if field_name not in vrf.VERIFIABLE_FIELDS:
+        raise HTTPException(status_code=400, detail="Field is not verifiable.")
+    doc = (
+        db.query(Document)
+        .filter(Document.id == document_id, Document.user_id == current_user.id)
+        .first()
+    )
+    if not doc:
+        raise HTTPException(status_code=404, detail="Document not found.")
+
+    fm = json.loads(doc.field_metadata) if doc.field_metadata else {}
+    if field_name not in fm:
+        raise HTTPException(status_code=400, detail="Field was not extracted for this document.")
+
+    field = fm[field_name]
+    field["verified"] = True
+    field["verified_by"] = current_user.id
+    field["verified_at"] = datetime.now(timezone.utc).isoformat()
+    fm[field_name] = field
+
+    doc.field_metadata = json.dumps(fm)
+    became_verified = _recompute_status(doc, fm)
+    db.commit()
+    db.refresh(doc)
+
+    if doc.verification_status == vrf.STATUS_VERIFIED:
+        audit_service.log_event(
+            db, current_user.id, vrf.EVENT_DOCUMENT_VERIFIED,
+            document_id=doc.id, request=request,
+        )
+    return {"id": doc.id, "field": field_name, "verification": _verification_block(doc)}
+
+
+@router.post("/{document_id}/verify")
+def verify_document(
+    document_id: int,
+    request: Request,
+    db: Session = Depends(get_db),
+    current_user: User = Depends(get_current_user),
+):
+    doc = (
+        db.query(Document)
+        .filter(Document.id == document_id, Document.user_id == current_user.id)
+        .first()
+    )
+    if not doc:
+        raise HTTPException(status_code=404, detail="Document not found.")
+
+    fm = json.loads(doc.field_metadata) if doc.field_metadata else {}
+    if not fm:
+        raise HTTPException(status_code=400, detail="Document has no verifiable fields.")
+
+    now = datetime.now(timezone.utc).isoformat()
+    for field in fm.values():
+        if not field.get("verified"):
+            field["verified"] = True
+            field["verified_by"] = current_user.id
+            field["verified_at"] = now
+
+    doc.field_metadata = json.dumps(fm)
+    _recompute_status(doc, fm)
+    db.commit()
+    db.refresh(doc)
+
+    audit_service.log_event(
+        db, current_user.id, vrf.EVENT_DOCUMENT_VERIFIED,
+        document_id=doc.id, request=request,
+    )
+    return {"id": doc.id, "verification": _verification_block(doc)}
+
+
+@router.post("/{document_id}/fields/{field_name}/reset")
+def reset_field(
+    document_id: int,
+    field_name: str,
+    request: Request,
+    db: Session = Depends(get_db),
+    current_user: User = Depends(get_current_user),
+):
+    if field_name not in vrf.VERIFIABLE_FIELDS:
+        raise HTTPException(status_code=400, detail="Field is not verifiable.")
+    doc = (
+        db.query(Document)
+        .filter(Document.id == document_id, Document.user_id == current_user.id)
+        .first()
+    )
+    if not doc:
+        raise HTTPException(status_code=404, detail="Document not found.")
+
+    fm = json.loads(doc.field_metadata) if doc.field_metadata else {}
+    if field_name not in fm:
+        raise HTTPException(status_code=400, detail="Field was not extracted for this document.")
+
+    field = fm[field_name]
+    field["current_value"] = field.get("ai_value")
+    field["last_modified_at"] = datetime.now(timezone.utc).isoformat()
+    field["verified"] = False
+    field["verified_by"] = None
+    field["verified_at"] = None
+    fm[field_name] = field
+
+    doc.field_metadata = json.dumps(fm)
+    _recompute_status(doc, fm)
+    db.commit()
+    db.refresh(doc)
+
+    audit_service.log_event(
+        db, current_user.id, vrf.EVENT_FIELD_RESTORED,
+        document_id=doc.id, request=request,
+    )
+    return {"id": doc.id, "field": field_name, "verification": _verification_block(doc)}
+
+
 @router.get("/")
 def list_documents(
     db: Session = Depends(get_db),
@@ -283,6 +489,7 @@ def list_documents(
                 "invoice_date": d.invoice_date,
                 "processing_status": d.processing_status,
                 "confidence": _parse_confidence(d.confidence),
+                "verification": _verification_block(d),
                 "created_at": d.created_at,
             }
             for d in docs
