@@ -9,3 +9,4 @@ from app.models.collection import Collection, DocumentCollection
 from app.models.refresh_token import RefreshToken
 from app.models.recovery_code import RecoveryCode
 from app.models.document_share import DocumentShare
+from app.models.verification_rule import VerificationRule

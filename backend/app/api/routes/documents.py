@@ -43,6 +43,7 @@ from app.services.document_processor import classify_and_extract
 from pydantic import BaseModel
 from app.services.collection_router import route_document_to_collections
 from app.services import verification as vrf
+from app.services import verification_rules as vrules
 from app.services import audit_service
 from app.models.audit_event import AuditEvent
 
@@ -335,6 +336,41 @@ def update_field(
     return {"id": doc.id, "field": field_name, "verification": _verification_block(doc)}
 
 
+def _learn_from_verified_doc(db, doc, fm, current_user):
+    """
+    Write verification rules for every eligible field on a freshly VERIFIED doc.
+    Eligibility (all required): field verified, current_value != ai_value,
+    doc status VERIFIED, resolvable vendor_key. Does NOT commit.
+    Vendor key is resolved from AI's ORIGINAL extraction (ai_value) so future
+    fresh extractions can match the rule.
+    """
+    if doc.verification_status != vrf.STATUS_VERIFIED:
+        return 0
+    ai_result = {f: meta.get("ai_value") for f, meta in fm.items()}
+    vendor_key = vrules.resolve_vendor_key(ai_result)
+    if vendor_key is None:
+        return 0
+    written = 0
+    for field_name, meta in fm.items():
+        if not meta.get("verified"):
+            continue
+        ai_value = meta.get("ai_value")
+        current_value = meta.get("current_value")
+        if current_value == ai_value:
+            continue
+        vrules.upsert_rule(
+            db,
+            user_id=current_user.id,
+            vendor_key=vendor_key,
+            field_name=field_name,
+            ai_value=ai_value,
+            corrected_value=current_value,
+            document_id=doc.id,
+        )
+        written += 1
+    return written
+
+
 def _recompute_status(doc, fm):
     verified_count = sum(1 for f in fm.values() if f.get("verified"))
     doc.verified_fields_count = verified_count
@@ -375,6 +411,7 @@ def verify_field(
 
     doc.field_metadata = json.dumps(fm)
     became_verified = _recompute_status(doc, fm)
+    _learn_from_verified_doc(db, doc, fm, current_user)
     db.commit()
     db.refresh(doc)
 
@@ -414,6 +451,7 @@ def verify_document(
 
     doc.field_metadata = json.dumps(fm)
     _recompute_status(doc, fm)
+    _learn_from_verified_doc(db, doc, fm, current_user)
     db.commit()
     db.refresh(doc)
 
@@ -497,6 +535,55 @@ def list_documents(
     }
 
 
+@router.get("/{document_id}/verification-context")
+def get_verification_context(
+    document_id: int,
+    db: Session = Depends(get_db),
+    current_user: User = Depends(get_current_user),
+):
+    """
+    Verification Context: per-field confidence + verified state (from
+    field_metadata) merged with LIVE rule-based suggestions. Suggestions are
+    computed on each call and never persisted. 404 on non-owned/missing doc.
+    """
+    doc = (
+        db.query(Document)
+        .filter(Document.id == document_id, Document.user_id == current_user.id)
+        .first()
+    )
+    if not doc:
+        raise HTTPException(status_code=404, detail="Document not found.")
+
+    fm = {}
+    if doc.field_metadata:
+        try:
+            fm = json.loads(doc.field_metadata) or {}
+        except (json.JSONDecodeError, TypeError):
+            fm = {}
+
+    # Rebuild the AI extraction result from each field's ai_value, then look up
+    # this user's verification rules for the resolved vendor key (live, read-only).
+    result = {field: meta.get("ai_value") for field, meta in fm.items()}
+    suggestions = vrules.lookup_suggestions(db, user_id=current_user.id, result=result)
+
+    fields = {}
+    for field, meta in fm.items():
+        block = {
+            "ai_value": meta.get("ai_value"),
+            "current_value": meta.get("current_value"),
+            "confidence": meta.get("confidence"),
+            "verified": meta.get("verified", False),
+            "suggestion": suggestions.get(field),
+        }
+        fields[field] = block
+
+    return {
+        "id": doc.id,
+        "status": doc.verification_status,
+        "verified_count": doc.verified_fields_count,
+        "total": doc.total_verifiable_fields,
+        "fields": fields,
+    }
 @router.get("/{document_id}/file")
 def get_document_file(
     document_id: int,
