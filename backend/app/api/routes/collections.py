@@ -48,6 +48,9 @@ def list_collections(
     ]
 
 
+from app.api.routes.documents import _parse_confidence, _verification_block
+
+
 @router.get("/{slug}/documents")
 def collection_documents(
     slug: str,
@@ -88,7 +91,8 @@ def collection_documents(
                 "effective_sensitive": d.effective_sensitive,
                 "is_encrypted": bool(d.r2_key),
                 "sha256": d.sha256,
-                "sha256": d.sha256,
+                "confidence": _parse_confidence(d.confidence),
+                "verification": _verification_block(d),
             }
             for d in docs
         ],

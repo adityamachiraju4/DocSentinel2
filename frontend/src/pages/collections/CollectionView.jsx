@@ -143,6 +143,24 @@ function FieldBadge({ doc, fieldKey }) {
   );
 }
 
+const VERIF_LABELS = {
+  vendor_name: "Vendor", invoice_number: "Invoice no.", invoice_date: "Date",
+  gstin: "GSTIN", hsn_codes: "HSN codes", tax_amount: "Tax amount",
+  total_amount: "Total amount", document_type: "Document type",
+};
+
+function StatusPill({ status }) {
+  const map = {
+    AI_EXTRACTED: { label: "AI extracted", col: T.text.muted },
+    NEEDS_REVIEW: { label: "Needs review", col: T.semantic.warning },
+    VERIFIED: { label: "Verified", col: T.semantic.success },
+  };
+  const m = map[status] || map.AI_EXTRACTED;
+  return (
+    <span style={{ fontSize: "9px", fontFamily: T.font.mono, textTransform: "uppercase", letterSpacing: "0.06em", padding: "2px 7px", borderRadius: "5px", border: `1px solid ${m.col}40`, background: `${m.col}14`, color: m.col }}>{m.label}</span>
+  );
+}
+
 function PreviewPane({ doc, onDeleted }) {
   const { authFetch, sensitiveReauth } = useAuth();
   const [blobUrl, setBlobUrl] = useState(null);
@@ -156,6 +174,42 @@ function PreviewPane({ doc, onDeleted }) {
   const [sensitive, setSensitive] = useState(false);
   const [sensBusy, setSensBusy] = useState(false);
   const [shareOpen, setShareOpen] = useState(false);
+  const [verifyMode, setVerifyMode] = useState(false);
+  const [verif, setVerif] = useState(doc?.verification || null);
+  const [editKey, setEditKey] = useState(null);   // field currently being edited
+  const [editVal, setEditVal] = useState("");
+  const [verifBusy, setVerifBusy] = useState(false);
+
+  // Keep local verification state in sync if the selected doc changes.
+  useEffect(() => { setVerif(doc?.verification || null); setVerifyMode(false); setEditKey(null); }, [doc?.id]);
+
+  async function patchField(fieldName, value) {
+    setVerifBusy(true);
+    try {
+      const res = await authFetch(`/api/documents/${doc.id}/fields/${fieldName}`, {
+        method: "PATCH",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({ value }),
+      });
+      if (res.ok) { const b = await res.json(); setVerif(b.verification); setEditKey(null); }
+    } finally { setVerifBusy(false); }
+  }
+
+  async function verifyField(fieldName) {
+    setVerifBusy(true);
+    try {
+      const res = await authFetch(`/api/documents/${doc.id}/fields/${fieldName}/verify`, { method: "POST" });
+      if (res.ok) { const b = await res.json(); setVerif(b.verification); }
+    } finally { setVerifBusy(false); }
+  }
+
+  async function resetField(fieldName) {
+    setVerifBusy(true);
+    try {
+      const res = await authFetch(`/api/documents/${doc.id}/fields/${fieldName}/reset`, { method: "POST" });
+      if (res.ok) { const b = await res.json(); setVerif(b.verification); }
+    } finally { setVerifBusy(false); }
+  }
   useEffect(() => { setSensitive(!!doc?.effective_sensitive); }, [doc?.id, doc?.effective_sensitive]);
   useEffect(() => { setActivity(null); setShareOpen(false); }, [doc?.id]);
   useEffect(() => {
@@ -381,8 +435,19 @@ function PreviewPane({ doc, onDeleted }) {
 
         {tab === "fields" ? (
           <div key="fields" className="cv-fade" style={{ display: "flex", flexDirection: "column", gap: "11px" }}>
-            {/* Vendor headline with legal entity demoted */}
-            {brand && (
+            {/* Verification header: status pill + review toggle (only when metadata exists) */}
+            {verif && (
+              <div style={{ display: "flex", justifyContent: "space-between", alignItems: "center", marginBottom: "2px" }}>
+                <StatusPill status={verif.status} />
+                <span style={{ display: "inline-flex", gap: "8px", alignItems: "center" }}>
+                  <span style={{ fontSize: "10px", fontFamily: T.font.mono, color: T.text.faint }}>{verif.verified_count}/{verif.total} verified</span>
+                  <button onClick={() => { setVerifyMode((v) => !v); setEditKey(null); }} style={{ fontSize: "10px", fontFamily: T.font.mono, padding: "3px 9px", borderRadius: "5px", cursor: "pointer", border: `1px solid ${verifyMode ? T.accent.base + "59" : "rgba(255,255,255,0.14)"}`, background: verifyMode ? "rgba(124,92,255,0.12)" : "rgba(255,255,255,0.03)", color: verifyMode ? T.accent.bright : T.text.secondary }}>{verifyMode ? "Done" : "Review"}</button>
+                </span>
+              </div>
+            )}
+
+            {/* Vendor headline with legal entity demoted (read mode only) */}
+            {!verifyMode && brand && (
               <div style={{ display: "flex", justifyContent: "space-between", gap: "16px", alignItems: "baseline" }}>
                 <span style={{ fontSize: "11px", color: T.text.muted }}>Vendor</span>
                 <span style={{ textAlign: "right", minWidth: 0 }}>
@@ -391,16 +456,54 @@ function PreviewPane({ doc, onDeleted }) {
                 </span>
               </div>
             )}
-            {visibleFields.filter((f) => f.label !== "Vendor").map((f) => (
+
+            {/* READ MODE */}
+            {!verifyMode && visibleFields.filter((f) => f.label !== "Vendor").map((f) => (
               <div key={f.label} style={{ display: "flex", justifyContent: "space-between", gap: "16px" }}>
                 <span style={{ fontSize: "11px", color: T.text.muted, display: "inline-flex", alignItems: "center" }}>{f.label}<FieldBadge doc={doc} fieldKey={f.key} /></span>
                 <span style={{ fontSize: "12px", fontFamily: T.font.mono, color: T.text.secondary, textAlign: "right", wordBreak: "break-all" }}>{f.value}</span>
               </div>
             ))}
-            {visibleFields.length === 0 && !brand && (
+            {!verifyMode && visibleFields.length === 0 && !brand && (
               <div style={{ fontSize: "12px", color: T.text.faint, fontFamily: T.font.mono }}>No fields extracted.</div>
             )}
-            <div style={{ marginTop: "4px", fontSize: "9px", fontFamily: T.font.mono, letterSpacing: "0.08em", color: T.text.faint, textTransform: "uppercase" }}>Extracted by AI</div>
+
+            {/* VERIFY MODE — editable rows sourced from verification metadata */}
+            {verifyMode && verif && Object.entries(verif.fields).map(([fk, fd]) => {
+              const dirty = JSON.stringify(fd.current_value) !== JSON.stringify(fd.ai_value);
+              const editing = editKey === fk;
+              return (
+                <div key={fk} style={{ display: "flex", flexDirection: "column", gap: "5px", paddingBottom: "9px", borderBottom: T.border.hairline }}>
+                  <div style={{ display: "flex", justifyContent: "space-between", alignItems: "center" }}>
+                    <span style={{ fontSize: "11px", color: T.text.muted, display: "inline-flex", alignItems: "center", gap: "6px" }}>
+                      {VERIF_LABELS[fk] || fk}
+                      {fd.verified && <span style={{ color: T.semantic.success, fontSize: "10px", fontFamily: T.font.mono }}>verified ✓</span>}
+                      {!fd.verified && dirty && <span style={{ color: T.semantic.warning, fontSize: "10px", fontFamily: T.font.mono }}>edited</span>}
+                    </span>
+                  </div>
+                  {editing ? (
+                    <div style={{ display: "flex", gap: "6px" }}>
+                      <input autoFocus value={editVal} onChange={(e) => setEditVal(e.target.value)} style={{ flex: 1, fontSize: "12px", fontFamily: T.font.mono, color: T.text.primary, background: "rgba(255,255,255,0.04)", border: `1px solid ${T.accent.base}59`, borderRadius: "5px", padding: "5px 8px", outline: "none" }} />
+                      <button disabled={verifBusy} onClick={() => patchField(fk, editVal)} style={{ fontSize: "10px", fontFamily: T.font.mono, padding: "4px 9px", borderRadius: "5px", cursor: "pointer", border: "none", background: T.accent.base, color: "#fff" }}>Save</button>
+                      <button disabled={verifBusy} onClick={() => setEditKey(null)} style={{ fontSize: "10px", fontFamily: T.font.mono, padding: "4px 9px", borderRadius: "5px", cursor: "pointer", border: "1px solid rgba(255,255,255,0.14)", background: "transparent", color: T.text.muted }}>Cancel</button>
+                    </div>
+                  ) : (
+                    <div style={{ display: "flex", justifyContent: "space-between", alignItems: "center", gap: "10px" }}>
+                      <span style={{ fontSize: "12px", fontFamily: T.font.mono, color: T.text.secondary, wordBreak: "break-all" }}>{String(fd.current_value ?? "—")}</span>
+                      <span style={{ display: "inline-flex", gap: "6px", flexShrink: 0 }}>
+                        <button disabled={verifBusy} onClick={() => { setEditKey(fk); setEditVal(String(fd.current_value ?? "")); }} style={{ fontSize: "10px", fontFamily: T.font.mono, padding: "3px 8px", borderRadius: "5px", cursor: "pointer", border: "1px solid rgba(255,255,255,0.14)", background: "transparent", color: T.text.secondary }}>Edit</button>
+                        {dirty && <button disabled={verifBusy} onClick={() => resetField(fk)} style={{ fontSize: "10px", fontFamily: T.font.mono, padding: "3px 8px", borderRadius: "5px", cursor: "pointer", border: "1px solid rgba(255,255,255,0.14)", background: "transparent", color: T.text.muted }}>Reset</button>}
+                        {!fd.verified && <button disabled={verifBusy} onClick={() => verifyField(fk)} style={{ fontSize: "10px", fontFamily: T.font.mono, padding: "3px 8px", borderRadius: "5px", cursor: "pointer", border: `1px solid ${T.semantic.success}59`, background: `${T.semantic.success}14`, color: T.semantic.success }}>Verify</button>}
+                      </span>
+                    </div>
+                  )}
+                </div>
+              );
+            })}
+
+            {!verifyMode && (
+              <div style={{ marginTop: "4px", fontSize: "9px", fontFamily: T.font.mono, letterSpacing: "0.08em", color: T.text.faint, textTransform: "uppercase" }}>Extracted by AI</div>
+            )}
           </div>
         ) : tab === "raw" ? (
           <div key="raw" className="cv-fade" style={{ fontSize: "11px", fontFamily: T.font.mono, color: T.text.secondary, whiteSpace: "pre-wrap", wordBreak: "break-word", lineHeight: 1.6 }}>
