@@ -354,6 +354,10 @@ def _learn_from_verified_doc(db, doc, fm, current_user):
     for field_name, meta in fm.items():
         if not meta.get("verified"):
             continue
+        # A field whose value was applied FROM a rule (accepted suggestion) is
+        # not a fresh correction to learn from — skip to keep rule provenance clean.
+        if meta.get("learn_excluded"):
+            continue
         ai_value = meta.get("ai_value")
         current_value = meta.get("current_value")
         if current_value == ai_value:
@@ -499,6 +503,78 @@ def reset_field(
 
     audit_service.log_event(
         db, current_user.id, vrf.EVENT_FIELD_RESTORED,
+        document_id=doc.id, request=request,
+    )
+    return {"id": doc.id, "field": field_name, "verification": _verification_block(doc)}
+
+
+class SuggestionResolution(BaseModel):
+    action: str          # "accept" (use rule value) | "keep_ai" (keep AI value)
+    rule_id: int
+
+
+@router.post("/{document_id}/fields/{field_name}/resolve-suggestion")
+def resolve_suggestion(
+    document_id: int,
+    field_name: str,
+    payload: SuggestionResolution,
+    request: Request,
+    db: Session = Depends(get_db),
+    current_user: User = Depends(get_current_user),
+):
+    """
+    Resolve a rule suggestion as a Verification Action. Both actions VERIFY the
+    field; they differ only in the value kept and the learning metric recorded.
+      accept  -> current_value <- rule.corrected_value; usage++ accept++
+      keep_ai -> current_value stays ai_value;          usage++ reject++
+    Accepted fields are flagged learn_excluded so they are not re-learned when
+    the document later reaches VERIFIED (applying a rule != learning a new one).
+    """
+    if payload.action not in ("accept", "keep_ai"):
+        raise HTTPException(status_code=400, detail="Invalid action.")
+    if field_name not in vrf.VERIFIABLE_FIELDS:
+        raise HTTPException(status_code=400, detail="Field is not verifiable.")
+    doc = (
+        db.query(Document)
+        .filter(Document.id == document_id, Document.user_id == current_user.id)
+        .first()
+    )
+    if not doc:
+        raise HTTPException(status_code=404, detail="Document not found.")
+    fm = json.loads(doc.field_metadata) if doc.field_metadata else {}
+    if field_name not in fm:
+        raise HTTPException(status_code=400, detail="Field was not extracted for this document.")
+
+    # Bump the rule metric first; None means the rule is missing or not owned.
+    if payload.action == "accept":
+        rule = vrules.record_acceptance(db, rule_id=payload.rule_id, user_id=current_user.id)
+    else:
+        rule = vrules.record_rejection(db, rule_id=payload.rule_id, user_id=current_user.id)
+    if rule is None:
+        raise HTTPException(status_code=404, detail="Rule not found.")
+
+    field = fm[field_name]
+    now = datetime.now(timezone.utc).isoformat()
+    if payload.action == "accept":
+        field["current_value"] = rule.corrected_value
+        field["last_modified_at"] = now
+        field["learn_excluded"] = True
+        event = vrf.EVENT_RULE_SUGGESTION_ACCEPTED
+    else:
+        # keep_ai: value unchanged; this is still a reviewed decision.
+        event = vrf.EVENT_RULE_SUGGESTION_REJECTED
+    field["verified"] = True
+    field["verified_by"] = current_user.id
+    field["verified_at"] = now
+    fm[field_name] = field
+    doc.field_metadata = json.dumps(fm)
+    _recompute_status(doc, fm)
+    if doc.verification_status == vrf.STATUS_VERIFIED:
+        _learn_from_verified_doc(db, doc, fm, current_user)
+    db.commit()
+    db.refresh(doc)
+    audit_service.log_event(
+        db, current_user.id, event,
         document_id=doc.id, request=request,
     )
     return {"id": doc.id, "field": field_name, "verification": _verification_block(doc)}

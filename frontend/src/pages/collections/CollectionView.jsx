@@ -179,9 +179,29 @@ function PreviewPane({ doc, onDeleted }) {
   const [editKey, setEditKey] = useState(null);   // field currently being edited
   const [editVal, setEditVal] = useState("");
   const [verifBusy, setVerifBusy] = useState(false);
+  const [suggestions, setSuggestions] = useState(null); // map field -> {corrected_value, rule_id}
 
   // Keep local verification state in sync if the selected doc changes.
   useEffect(() => { setVerif(doc?.verification || null); setVerifyMode(false); setEditKey(null); }, [doc?.id]);
+  useEffect(() => { setSuggestions(null); }, [doc?.id]);
+  useEffect(() => {
+    if (!verifyMode || !doc?.id || suggestions !== null) return;
+    let alive = true;
+    authFetch(`/api/documents/${doc.id}/verification-context`, { cache: "no-store" })
+      .then((r) => (r.ok ? r.json() : null))
+      .then((b) => {
+        if (!alive) return;
+        const sug = {};
+        if (b && b.fields) {
+          for (const [fk, fd] of Object.entries(b.fields)) {
+            if (fd && fd.suggestion) sug[fk] = fd.suggestion;
+          }
+        }
+        setSuggestions(sug);
+      })
+      .catch(() => { if (alive) setSuggestions({}); });
+    return () => { alive = false; };
+  }, [verifyMode, doc?.id, suggestions, authFetch]);
 
   async function patchField(fieldName, value) {
     setVerifBusy(true);
@@ -208,6 +228,21 @@ function PreviewPane({ doc, onDeleted }) {
     try {
       const res = await authFetch(`/api/documents/${doc.id}/fields/${fieldName}/reset`, { method: "POST" });
       if (res.ok) { const b = await res.json(); setVerif(b.verification); }
+    } finally { setVerifBusy(false); }
+  }
+  async function resolveSuggestion(fieldName, action, ruleId) {
+    setVerifBusy(true);
+    try {
+      const res = await authFetch(`/api/documents/${doc.id}/fields/${fieldName}/resolve-suggestion`, {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({ action, rule_id: ruleId }),
+      });
+      if (res.ok) {
+        const b = await res.json();
+        setVerif(b.verification);
+        setSuggestions((prev) => { const n = { ...(prev || {}) }; delete n[fieldName]; return n; });
+      }
     } finally { setVerifBusy(false); }
   }
   useEffect(() => { setSensitive(!!doc?.effective_sensitive); }, [doc?.id, doc?.effective_sensitive]);
@@ -494,6 +529,17 @@ function PreviewPane({ doc, onDeleted }) {
                         <button disabled={verifBusy} onClick={() => { setEditKey(fk); setEditVal(String(fd.current_value ?? "")); }} style={{ fontSize: "10px", fontFamily: T.font.mono, padding: "3px 8px", borderRadius: "5px", cursor: "pointer", border: "1px solid rgba(255,255,255,0.14)", background: "transparent", color: T.text.secondary }}>Edit</button>
                         {dirty && <button disabled={verifBusy} onClick={() => resetField(fk)} style={{ fontSize: "10px", fontFamily: T.font.mono, padding: "3px 8px", borderRadius: "5px", cursor: "pointer", border: "1px solid rgba(255,255,255,0.14)", background: "transparent", color: T.text.muted }}>Reset</button>}
                         {!fd.verified && <button disabled={verifBusy} onClick={() => verifyField(fk)} style={{ fontSize: "10px", fontFamily: T.font.mono, padding: "3px 8px", borderRadius: "5px", cursor: "pointer", border: `1px solid ${T.semantic.success}59`, background: `${T.semantic.success}14`, color: T.semantic.success }}>Verify</button>}
+                      </span>
+                    </div>
+                  )}
+                  {suggestions && suggestions[fk] && !fd.verified && (
+                    <div style={{ display: "flex", flexDirection: "column", gap: "6px", marginTop: "2px", padding: "7px 9px", borderRadius: "6px", border: `1px solid ${T.accent.base}3D`, background: "rgba(124,92,255,0.07)" }}>
+                      <span style={{ fontSize: "10px", fontFamily: T.font.mono, color: T.accent.bright }}>
+                        Previously verified: <span style={{ color: T.text.primary, wordBreak: "break-all" }}>{String(suggestions[fk].previously_verified ?? "—")}</span>
+                      </span>
+                      <span style={{ display: "inline-flex", gap: "6px" }}>
+                        <button disabled={verifBusy} onClick={() => resolveSuggestion(fk, "accept", suggestions[fk].rule_id)} style={{ fontSize: "10px", fontFamily: T.font.mono, padding: "3px 9px", borderRadius: "5px", cursor: "pointer", border: "none", background: T.accent.base, color: "#fff" }}>Accept</button>
+                        <button disabled={verifBusy} onClick={() => resolveSuggestion(fk, "keep_ai", suggestions[fk].rule_id)} style={{ fontSize: "10px", fontFamily: T.font.mono, padding: "3px 9px", borderRadius: "5px", cursor: "pointer", border: "1px solid rgba(255,255,255,0.14)", background: "transparent", color: T.text.secondary }}>Keep AI</button>
                       </span>
                     </div>
                   )}

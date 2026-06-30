@@ -152,6 +152,44 @@ def upsert_rule(
     return rule
 
 
+def _get_owned_rule(db: Session, *, rule_id: int, user_id: int) -> VerificationRule | None:
+    """Fetch a rule by id, scoped to its owner. None if missing or not owned."""
+    return (
+        db.query(VerificationRule)
+        .filter(VerificationRule.id == rule_id, VerificationRule.user_id == user_id)
+        .first()
+    )
+
+
+def record_acceptance(db: Session, *, rule_id: int, user_id: int) -> VerificationRule | None:
+    """
+    User accepted a suggestion (kept the previously-verified value). Bumps
+    usage_count and accept_count. Returns the rule, or None if not owned.
+    Does NOT commit.
+    """
+    rule = _get_owned_rule(db, rule_id=rule_id, user_id=user_id)
+    if rule is None:
+        return None
+    rule.usage_count = (rule.usage_count or 0) + 1
+    rule.accept_count = (rule.accept_count or 0) + 1
+    rule.last_used_at = datetime.now(timezone.utc)
+    return rule
+
+
+def record_rejection(db: Session, *, rule_id: int, user_id: int) -> VerificationRule | None:
+    """
+    User kept the AI value over the suggestion. Bumps usage_count and
+    reject_count. Returns the rule, or None if not owned. Does NOT commit.
+    """
+    rule = _get_owned_rule(db, rule_id=rule_id, user_id=user_id)
+    if rule is None:
+        return None
+    rule.usage_count = (rule.usage_count or 0) + 1
+    rule.reject_count = (rule.reject_count or 0) + 1
+    rule.last_used_at = datetime.now(timezone.utc)
+    return rule
+
+
 def lookup_suggestions(db: Session, *, user_id: int, result: dict) -> dict:
     """
     Pure read. Given an AI extraction result, return per-field suggestions drawn
