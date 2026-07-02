@@ -38,6 +38,7 @@ function Chrome({ children }) {
 
 function statusStyle(status) {
   const s = (status || "").toLowerCase();
+  if (s.includes("duplicate")) return { bg: "rgba(88,166,255,0.08)", color: T.semantic.info, border: T.border.info };
   if (s.includes("process") || s.includes("complete") || s.includes("done") || s.includes("success")) return { bg: "rgba(63,185,80,0.08)", color: T.semantic.success, border: T.border.success };
   if (s.includes("valid")) return { bg: "rgba(88,166,255,0.08)", color: T.semantic.info, border: T.border.info };
   if (s.includes("pending") || s.includes("queue") || s.includes("processing")) return { bg: "rgba(210,153,34,0.08)", color: T.semantic.warning, border: T.border.warning };
@@ -94,12 +95,25 @@ export default function Vault() {
         setQueue((q) => q.map((x) => (x.id === item.id ? { ...x, status: "failed", error: data.detail || "Upload failed" } : x)));
         return;
       }
-      setQueue((q) => q.map((x) => (x.id === item.id ? { ...x, status: "done" } : x)));
+      const dups = data.duplicate_matches || [];
+      if (dups.length > 0) {
+        setQueue((q) => q.map((x) => (x.id === item.id ? { ...x, status: "duplicate", matches: dups } : x)));
+      } else {
+        setQueue((q) => q.map((x) => (x.id === item.id ? { ...x, status: "done" } : x)));
+      }
     } catch (err) {
       setQueue((q) => q.map((x) => (x.id === item.id ? { ...x, status: "failed", error: "Network error" } : x)));
     }
   }
 
+  // Dismiss a duplicate warning — the uploaded doc already exists, user keeps both
+  function dismissDuplicate(id) {
+    setQueue((q) => q.map((x) => (x.id === id ? { ...x, status: "done", matches: undefined } : x)));
+  }
+  // Dismiss a duplicate warning — the uploaded doc already exists, user keeps both
+  function dismissDuplicate(id) {
+    setQueue((q) => q.map((x) => (x.id === id ? { ...x, status: "done", matches: undefined } : x)));
+  }
   // Process an array of queue items with a concurrency cap
   async function runBatch(items) {
     setBatchActive(true);
@@ -227,7 +241,7 @@ export default function Vault() {
             {queue.map((item) => {
               const st = statusStyle(item.status);
               return (
-                <div key={item.id} style={{ display: "flex", alignItems: "center", gap: "12px", padding: "10px 20px", borderBottom: T.border.hairline }}>
+                <div key={item.id} style={{ display: "flex", flexWrap: "wrap", alignItems: "center", gap: "12px", padding: "10px 20px", borderBottom: T.border.hairline }}>
                   <span style={{ display: "flex", width: "24px", height: "24px", borderRadius: "6px", border: T.border.hairline, background: "rgba(255,255,255,0.02)", alignItems: "center", justifyContent: "center", flexShrink: 0 }}>
                     {item.status === "processing" ? (
                       <div style={{ width: "12px", height: "12px", border: "1.5px solid rgba(255,255,255,0.1)", borderTopColor: T.accent.bright, borderRadius: "50%", animation: "ds-spin 0.8s linear infinite" }} />
@@ -243,6 +257,23 @@ export default function Vault() {
                   <span style={{ display: "inline-flex", alignItems: "center", gap: "6px", padding: "3px 10px", borderRadius: "4px", fontSize: "9px", fontFamily: T.font.mono, fontWeight: "bold", backgroundColor: st.bg, color: st.color, border: st.border, flexShrink: 0, animation: item.status === "processing" ? "ds-pulse 1.5s ease-in-out infinite" : "none" }}>
                     <span style={{ width: "4px", height: "4px", borderRadius: "50%", backgroundColor: st.color }} />{item.status.toUpperCase()}
                   </span>
+                  {item.status === "duplicate" && item.matches && (
+                    <div style={{ width: "100%", marginTop: "4px", padding: "10px 12px", background: "rgba(88,166,255,0.06)", border: T.border.info, borderRadius: "6px", display: "flex", flexDirection: "column", gap: "8px" }}>
+                      <span style={{ fontSize: "11px", color: T.text.secondary, fontFamily: T.font.mono }}>
+                        This document already exists in your vault. Both copies have been kept.
+                      </span>
+                      {item.matches.map((m) => (
+                        <div key={m.document_id} style={{ fontSize: "10px", color: T.text.muted, fontFamily: T.font.mono, display: "flex", flexWrap: "wrap", gap: "8px", alignItems: "center" }}>
+                          <span style={{ padding: "2px 6px", borderRadius: "3px", background: "rgba(88,166,255,0.1)", color: T.semantic.info, fontWeight: "bold" }}>{m.type === "exact" ? "EXACT" : "BUSINESS"}</span>
+                          <span>{m.reason}</span>
+                          <span style={{ color: T.text.faint }}>#{m.document_id} · {m.filename}</span>
+                        </div>
+                      ))}
+                      <div>
+                        <button onClick={() => dismissDuplicate(item.id)} style={{ background: "none", border: T.border.hairline, color: T.text.secondary, cursor: "pointer", fontSize: "9px", fontWeight: "bold", padding: "4px 12px", borderRadius: "4px", fontFamily: T.font.mono, letterSpacing: "0.05em" }}>DISMISS</button>
+                      </div>
+                    </div>
+                  )}
                 </div>
               );
             })}

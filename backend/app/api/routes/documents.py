@@ -45,6 +45,7 @@ from app.services.collection_router import route_document_to_collections
 from app.services import verification as vrf
 from app.services import verification_rules as vrules
 from app.services import audit_service
+from app.services import duplicate_service
 from app.models.audit_event import AuditEvent
 
 router = APIRouter(prefix="/documents", tags=["documents"])
@@ -121,6 +122,14 @@ async def upload_document(
     db.refresh(doc)
     route_document_to_collections(db, doc.id, doc.document_type, source="AI")
     audit_service.log_event(db, current_user.id, audit_service.DOCUMENT_UPLOAD, document_id=doc.id, request=request)
+    duplicate_matches = duplicate_service.find_duplicates(
+        db,
+        user_id=current_user.id,
+        sha256=doc.sha256,
+        incoming_vendor_key=vrules.resolve_vendor_key(extracted),
+        invoice_number=doc.invoice_number,
+        exclude_document_id=doc.id,
+    )
 
     return {
         "message": "Document uploaded and processed successfully.",
@@ -135,7 +144,8 @@ async def upload_document(
             "confidence": _parse_confidence(doc.confidence),
             "verification": _verification_block(doc),
             "created_at": doc.created_at,
-        }
+        },
+        "duplicate_matches": duplicate_matches,
     }
 
 @router.get("/stats")
