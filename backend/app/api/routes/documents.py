@@ -29,7 +29,7 @@ def _verification_block(d):
 # PhRedSec™ | api/routes/documents.py
 # ─────────────────────────────────────────
 
-from fastapi import APIRouter, Depends, HTTPException, UploadFile, File, Response, Header, Request
+from fastapi import APIRouter, Depends, HTTPException, UploadFile, File, Response, Header, Request, Query
 from app.core.auth import verify_sensitive_grant
 from sqlalchemy.orm import Session
 
@@ -764,6 +764,87 @@ def search_documents(
             }
             for d in docs
         ],
+    }
+
+
+# Fields compared in a version diff: the extracted business fields, the
+# same significant set the search route indexes. Not raw text, not
+# internal/system columns.
+_DIFF_FIELDS = (
+    "document_type",
+    "vendor_name",
+    "invoice_number",
+    "invoice_date",
+    "total_amount",
+    "gstin",
+    "tax_amount",
+    "hsn_codes",
+)
+
+
+@router.get("/diff")
+def diff_document_versions(
+    from_id: int = Query(..., alias="from"),
+    to_id: int = Query(..., alias="to"),
+    db: Session = Depends(get_db),
+    current_user: User = Depends(get_current_user),
+):
+    """Field-level diff between two documents in the same version lineage.
+
+    Compares the extracted business fields of two explicit doc ids.
+    Returns every field tagged changed/unchanged (full picture, not
+    just deltas). Both docs are ownership-checked independently.
+    Errors: 404 either doc not-found/not-owned · 409 docs not in the
+    same version group (cross-group comparison is meaningless).
+    Comparing a doc with itself is allowed (all fields unchanged).
+    """
+    def _load(doc_id):
+        return (
+            db.query(Document)
+            .filter(Document.id == doc_id, Document.user_id == current_user.id)
+            .first()
+        )
+
+    d_from = _load(from_id)
+    d_to = _load(to_id)
+    if not d_from or not d_to:
+        raise HTTPException(status_code=404, detail="Document not found.")
+
+    # Same-lineage guard. Two standalone docs (both group_id NULL) are
+    # never the same lineage unless they are literally the same row.
+    same_group = (
+        d_from.id == d_to.id
+        or (d_from.group_id is not None and d_from.group_id == d_to.group_id)
+    )
+    if not same_group:
+        raise HTTPException(
+            status_code=409,
+            detail="Documents are not versions of the same lineage.",
+        )
+
+    fields = []
+    for name in _DIFF_FIELDS:
+        v_from = getattr(d_from, name)
+        v_to = getattr(d_to, name)
+        fields.append({
+            "field": name,
+            "from": v_from,
+            "to": v_to,
+            "changed": v_from != v_to,
+        })
+
+    return {
+        "from": {
+            "id": d_from.id,
+            "version_number": d_from.version_number if d_from.group_id is not None else 1,
+        },
+        "to": {
+            "id": d_to.id,
+            "version_number": d_to.version_number if d_to.group_id is not None else 1,
+        },
+        "group_id": d_from.group_id,
+        "changed_count": sum(1 for f in fields if f["changed"]),
+        "fields": fields,
     }
 
 
