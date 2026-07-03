@@ -47,7 +47,7 @@ from app.services import verification_rules as vrules
 from app.services import audit_service
 from app.services import duplicate_service
 from app.services import versioning_service
-from app.services.document_query import latest_only
+from app.services.document_query import latest_only, include_versions
 from app.models.audit_event import AuditEvent
 
 router = APIRouter(prefix="/documents", tags=["documents"])
@@ -763,6 +763,61 @@ def search_documents(
                 "created_at": d.created_at,
             }
             for d in docs
+        ],
+    }
+
+
+@router.get("/{document_id}/versions")
+def get_document_versions(
+    document_id: int,
+    db: Session = Depends(get_db),
+    current_user: User = Depends(get_current_user),
+):
+    """Version timeline for a document's lineage.
+
+    Keys on document id and resolves its group. Standalone (ungrouped)
+    docs return a single-entry timeline (the doc as its own v1) so the
+    frontend can always render a timeline. Grouped docs return every
+    member ordered by version_number ascending (promotion order, never
+    upload time). 404 on not-found/not-owned (no existence disclosure).
+    """
+    doc = (
+        db.query(Document)
+        .filter(Document.id == document_id, Document.user_id == current_user.id)
+        .first()
+    )
+    if not doc:
+        raise HTTPException(status_code=404, detail="Document not found.")
+
+    if doc.group_id is None:
+        members = [doc]
+    else:
+        members = (
+            include_versions(
+                db.query(Document).filter(
+                    Document.user_id == current_user.id,
+                    Document.group_id == doc.group_id,
+                )
+            )
+            .order_by(Document.version_number.asc())
+            .all()
+        )
+
+    return {
+        "document_id": document_id,
+        "group_id": doc.group_id,
+        "grouped": doc.group_id is not None,
+        "versions": [
+            {
+                "id": m.id,
+                "filename": m.original_filename,
+                "version_number": m.version_number if m.group_id is not None else 1,
+                "is_latest": m.is_latest if m.group_id is not None else True,
+                "document_type": m.document_type,
+                "processing_status": m.processing_status,
+                "created_at": m.created_at,
+            }
+            for m in members
         ],
     }
 
