@@ -652,6 +652,76 @@ def list_documents(
     }
 
 
+@router.get("/search")
+def search_documents(
+    q: str = "",
+    db: Session = Depends(get_db),
+    current_user: User = Depends(get_current_user),
+):
+    """
+    Smart Search over the user's own documents.
+    Postgres: weighted tsvector + ts_rank ordering (real relevance).
+    SQLite (local dev): LIKE across columns, created_at DESC, NO rank
+      -- explicitly NOT production-parity (no stemming/weighting/rank).
+    Empty q returns [] (search is not a list endpoint; use GET / for listing).
+    """
+    from sqlalchemy import func, text, or_
+
+    term = (q or "").strip()
+    if not term:
+        return {"documents": [], "query": "", "ranked": False}
+
+    dialect = db.bind.dialect.name
+    base = db.query(Document).filter(Document.user_id == current_user.id)
+
+    if dialect == "postgresql":
+        docs = (
+            base.filter(text("tsv @@ plainto_tsquery('english', :q)"))
+            .params(q=term)
+            .order_by(text("ts_rank(tsv, plainto_tsquery('english', :q)) DESC"))
+            .all()
+        )
+        ranked = True
+    else:
+        like = f"%{term}%"
+        cols = [
+            Document.vendor_name,
+            Document.invoice_number,
+            Document.document_type,
+            Document.gstin,
+            Document.summary,
+            Document.extracted_text,
+            Document.original_filename,
+            Document.hsn_codes,
+        ]
+        docs = (
+            base.filter(or_(*[c.ilike(like) for c in cols]))
+            .order_by(Document.created_at.desc())
+            .all()
+        )
+        ranked = False
+
+    return {
+        "query": term,
+        "ranked": ranked,
+        "documents": [
+            {
+                "id": d.id,
+                "filename": d.original_filename,
+                "document_type": d.document_type,
+                "vendor_name": d.vendor_name,
+                "total_amount": d.total_amount,
+                "invoice_date": d.invoice_date,
+                "processing_status": d.processing_status,
+                "confidence": _parse_confidence(d.confidence),
+                "verification": _verification_block(d),
+                "created_at": d.created_at,
+            }
+            for d in docs
+        ],
+    }
+
+
 @router.get("/{document_id}/verification-context")
 def get_verification_context(
     document_id: int,
