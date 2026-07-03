@@ -302,8 +302,8 @@ def summarize_document(
 
 class PromoteVersion(BaseModel):
     anchor_document_id: int
-    # Reserved for the future document_version_events model. Accepted for API
-    # forward compatibility; NOT persisted in this commit.
+    # Persisted as the reason on a VERSION_CREATED row in
+    # document_version_events (written inside the promote transaction).
     reason: str | None = None
 
 
@@ -323,7 +323,7 @@ def promote_document_version(
     becomes the latest version regardless of created_at.
 
     Errors: 404 visibility/ownership · 400 malformed · 409 business conflict.
-    `reason` is accepted but not yet persisted (reserved for version events).
+    `reason` is persisted as a VERSION_CREATED event in document_version_events.
     """
     try:
         result = versioning_service.promote_to_version(
@@ -331,6 +331,7 @@ def promote_document_version(
             user_id=current_user.id,
             new_doc_id=new_doc_id,
             anchor_document_id=payload.anchor_document_id,
+            reason=payload.reason,
         )
     except versioning_service.PromotionError as e:
         raise HTTPException(status_code=e.status, detail=e.detail)

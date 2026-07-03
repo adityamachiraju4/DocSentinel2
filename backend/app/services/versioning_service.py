@@ -16,6 +16,7 @@ from sqlalchemy.orm import Session
 
 from app.models.document import Document
 from app.models.document_group import DocumentGroup
+from app.models.document_version_event import DocumentVersionEvent
 
 
 class PromotionError(Exception):
@@ -45,7 +46,7 @@ def _display_name(anchor: Document) -> str:
 
 
 def promote_to_version(db: Session, user_id: int, new_doc_id: int,
-                       anchor_document_id: int) -> dict:
+                       anchor_document_id: int, reason: str | None = None) -> dict:
     """Attach new_doc as the newest version in anchor's lineage.
 
     new_doc_id becomes the latest version regardless of upload time — the
@@ -100,6 +101,15 @@ def promote_to_version(db: Session, user_id: int, new_doc_id: int,
         new_doc.group_id = group.id
         new_doc.version_number = 2
         new_doc.is_latest = True
+
+        db.add(DocumentVersionEvent(
+            event_type="VERSION_CREATED",
+            group_id=group.id,
+            from_document_id=anchor.id,
+            to_document_id=new_doc.id,
+            reason=reason,
+            created_by=user_id,
+        ))
     else:
         # ── Case B: anchor already in a lineage. Append. ──
         group = (
@@ -127,6 +137,15 @@ def promote_to_version(db: Session, user_id: int, new_doc_id: int,
         new_doc.group_id = group.id
         new_doc.version_number = next_version
         new_doc.is_latest = True
+
+        db.add(DocumentVersionEvent(
+            event_type="VERSION_CREATED",
+            group_id=group.id,
+            from_document_id=prev_latest[0].id if prev_latest else None,
+            to_document_id=new_doc.id,
+            reason=reason,
+            created_by=user_id,
+        ))
 
     db.commit()
     db.refresh(new_doc)

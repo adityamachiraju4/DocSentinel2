@@ -10,4 +10,5 @@ from app.models.refresh_token import RefreshToken
 from app.models.recovery_code import RecoveryCode
 from app.models.document_share import DocumentShare
 from app.models.document_group import DocumentGroup
+from app.models.document_version_event import DocumentVersionEvent
 from app.models.verification_rule import VerificationRule
