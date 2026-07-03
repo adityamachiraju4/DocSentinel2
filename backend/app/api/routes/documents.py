@@ -717,7 +717,7 @@ def search_documents(
         return {"documents": [], "query": "", "ranked": False}
 
     dialect = db.bind.dialect.name
-    base = db.query(Document).filter(Document.user_id == current_user.id)
+    base = latest_only(db.query(Document).filter(Document.user_id == current_user.id))
 
     if dialect == "postgresql":
         docs = (
