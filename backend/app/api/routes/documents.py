@@ -46,6 +46,7 @@ from app.services import verification as vrf
 from app.services import verification_rules as vrules
 from app.services import audit_service
 from app.services import duplicate_service
+from app.services import versioning_service
 from app.models.audit_event import AuditEvent
 
 router = APIRouter(prefix="/documents", tags=["documents"])
@@ -296,6 +297,48 @@ def summarize_document(
     doc.summary = json.dumps(result)
     db.commit()
     return {"cached": False, **result}
+
+
+class PromoteVersion(BaseModel):
+    anchor_document_id: int
+    # Reserved for the future document_version_events model. Accepted for API
+    # forward compatibility; NOT persisted in this commit.
+    reason: str | None = None
+
+
+@router.post("/{new_doc_id}/promote")
+def promote_document_version(
+    new_doc_id: int,
+    payload: PromoteVersion,
+    request: Request,
+    db: Session = Depends(get_db),
+    current_user: User = Depends(get_current_user),
+):
+    """
+    Version Attachment: attach a standalone document as the newest version in
+    the anchor document's lineage. Bytes/fields never change; only lineage.
+
+    Version numbers follow promotion order, never upload time — new_doc_id
+    becomes the latest version regardless of created_at.
+
+    Errors: 404 visibility/ownership · 400 malformed · 409 business conflict.
+    `reason` is accepted but not yet persisted (reserved for version events).
+    """
+    try:
+        result = versioning_service.promote_to_version(
+            db,
+            user_id=current_user.id,
+            new_doc_id=new_doc_id,
+            anchor_document_id=payload.anchor_document_id,
+        )
+    except versioning_service.PromotionError as e:
+        raise HTTPException(status_code=e.status, detail=e.detail)
+
+    audit_service.log_event(
+        db, current_user.id, audit_service.DOCUMENT_VERSION_CREATED,
+        document_id=new_doc_id, request=request,
+    )
+    return result
 
 
 @router.patch("/{document_id}/sensitive")
