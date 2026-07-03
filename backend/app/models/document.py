@@ -48,6 +48,14 @@ class Document(Base):
     field_metadata = Column(Text, nullable=True)  # JSON: per-field {ai_value,current_value,confidence,verified,verified_by,verified_at,last_modified_at}
     # Summary (Sprint B feature 2) — JSON: {version, summary, key_points[]}; cached, on-demand
     summary = Column(Text, nullable=True)
+    # Version History (Sprint C) — NULL until this doc is explicitly grouped.
+    # group_id NULL = standalone doc (the common case). Within a group,
+    # version_number is 1..N and exactly one row has is_latest True.
+    # is_latest maintained in the promote/delete service layer (NOT a DB
+    # trigger) for SQLite/Postgres parity.
+    group_id = Column(Integer, ForeignKey("document_groups.id"), nullable=True)
+    version_number = Column(Integer, nullable=True)
+    is_latest = Column(Boolean, nullable=True)
     verification_status = Column(String, nullable=False, default="AI_EXTRACTED")  # AI_EXTRACTED | NEEDS_REVIEW | VERIFIED
     verified_fields_count = Column(Integer, nullable=False, default=0)
     total_verifiable_fields = Column(Integer, nullable=False, default=0)
