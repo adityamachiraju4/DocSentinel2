@@ -47,6 +47,7 @@ from app.services import verification_rules as vrules
 from app.services import audit_service
 from app.services import duplicate_service
 from app.services import versioning_service
+from app.services.document_query import latest_only
 from app.models.audit_event import AuditEvent
 
 router = APIRouter(prefix="/documents", tags=["documents"])
@@ -670,8 +671,9 @@ def list_documents(
     current_user: User = Depends(get_current_user),
 ):
     docs = (
-        db.query(Document)
-        .filter(Document.user_id == current_user.id)
+        latest_only(
+            db.query(Document).filter(Document.user_id == current_user.id)
+        )
         .order_by(Document.created_at.desc())
         .all()
     )
