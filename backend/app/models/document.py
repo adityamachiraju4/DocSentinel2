@@ -46,6 +46,8 @@ class Document(Base):
     confidence = Column(Text, nullable=True)  # JSON: deterministic confidence object
     # Verification Layer
     field_metadata = Column(Text, nullable=True)  # JSON: per-field {ai_value,current_value,confidence,verified,verified_by,verified_at,last_modified_at}
+    # Summary (Sprint B feature 2) — JSON: {version, summary, key_points[]}; cached, on-demand
+    summary = Column(Text, nullable=True)
     verification_status = Column(String, nullable=False, default="AI_EXTRACTED")  # AI_EXTRACTED | NEEDS_REVIEW | VERIFIED
     verified_fields_count = Column(Integer, nullable=False, default=0)
     total_verifiable_fields = Column(Integer, nullable=False, default=0)

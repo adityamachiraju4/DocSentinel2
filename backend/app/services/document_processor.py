@@ -275,3 +275,64 @@ def classify_and_extract(file_bytes: bytes, filename: str, mime_type: str) -> di
     result["confidence"] = compute_confidence(result)
     result["verification"] = build_field_metadata(result, result["confidence"])
     return result
+
+
+# ── Document Summaries (Sprint B feature 2) ────────────────────────────────
+# On-demand, cached. Pure function: takes extracted_text, returns the summary
+# object. No DB, no persistence — the endpoint owns caching. Bump SUMMARY_VERSION
+# when the prompt changes so regenerations are traceable.
+SUMMARY_VERSION = 1
+
+
+def generate_summary(extracted_text: str) -> dict:
+    """Return {version, summary, key_points[]} from a document's extracted text.
+    Deterministic (temperature=0, seed=42). Factual, no speculation."""
+    text = (extracted_text or "").strip()
+    if not text:
+        return {"version": SUMMARY_VERSION, "summary": "", "key_points": []}
+
+    prompt = f"""You are a document intelligence system for Indian businesses.
+Summarize the following document for a busy user scanning their document vault.
+
+Document text:
+{text[:6000]}
+
+Rules:
+- "summary": a single factual paragraph, 120 words or fewer.
+- "key_points": 3 to 5 concise bullet points, each a short factual statement.
+- Factual only. No speculation, no advice, no invented details.
+- Do not merely repeat obvious metadata (vendor name, invoice number, amount);
+  surface what matters about the document's content and purpose.
+
+Return ONLY a valid JSON object with these exact keys:
+{{
+  "summary": "string",
+  "key_points": ["string", "string", "string"]
+}}
+Return ONLY the JSON. No explanation. No markdown. No extra text."""
+
+    try:
+        response = client.chat.completions.create(
+            model="llama-3.3-70b-versatile",
+            messages=[{"role": "user", "content": prompt}],
+            temperature=0,
+            seed=42,
+            max_tokens=800,
+            response_format={"type": "json_object"},
+        )
+        result_text = _strip_fences(response.choices[0].message.content)
+        raw = json.loads(result_text)
+        summary = raw.get("summary")
+        key_points = raw.get("key_points")
+        return {
+            "version": SUMMARY_VERSION,
+            "summary": summary if isinstance(summary, str) else "",
+            "key_points": [str(p) for p in key_points] if isinstance(key_points, list) else [],
+        }
+    except json.JSONDecodeError as e:
+        print(f"[SUMMARY JSON ERROR] {e}")
+        return {"version": SUMMARY_VERSION, "summary": "", "key_points": []}
+    except Exception as e:
+        print(f"[SUMMARY ERROR] {type(e).__name__}: {e}")
+        return {"version": SUMMARY_VERSION, "summary": "", "key_points": []}
+

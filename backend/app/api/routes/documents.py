@@ -39,7 +39,7 @@ from app.models.user import User
 from app.models.document import Document
 from app.services.storage_service import save_file, get_file
 from app.services.sensitive_detector import detect_sensitive
-from app.services.document_processor import classify_and_extract
+from app.services.document_processor import classify_and_extract, generate_summary
 from pydantic import BaseModel
 from app.services.collection_router import route_document_to_collections
 from app.services import verification as vrf
@@ -105,6 +105,7 @@ async def upload_document(
         gstin=extracted.get("gstin"),
         hsn_codes=extracted.get("hsn_codes"),
         tax_amount=extracted.get("tax_amount"),
+        extracted_text=extracted.get("raw_text"),
         extraction_method=extracted.get("extraction_method"),
         confidence=json.dumps(extracted.get("confidence")) if extracted.get("confidence") is not None else None,
         field_metadata=json.dumps(extracted["verification"]["field_metadata"]),
@@ -265,6 +266,36 @@ def delete_document(
     current_user.documents_used = max(0, current_user.documents_used - 1)
     db.commit()
     return {"message": "Document deleted successfully."}
+
+
+@router.post("/{document_id}/summarize")
+def summarize_document(
+    document_id: int,
+    force: bool = False,
+    db: Session = Depends(get_db),
+    current_user: User = Depends(get_current_user),
+):
+    """On-demand, cached document summary. Returns {version, summary, key_points}.
+    Cached in documents.summary (JSON). Regenerates only when force=true or no
+    cached summary exists. 404 on not-found/not-owned (no existence disclosure)."""
+    doc = (
+        db.query(Document)
+        .filter(Document.id == document_id, Document.user_id == current_user.id)
+        .first()
+    )
+    if not doc:
+        raise HTTPException(status_code=404, detail="Document not found.")
+
+    if doc.summary and not force:
+        try:
+            return {"cached": True, **json.loads(doc.summary)}
+        except (json.JSONDecodeError, TypeError):
+            pass  # corrupt cache → fall through and regenerate
+
+    result = generate_summary(doc.extracted_text or "")
+    doc.summary = json.dumps(result)
+    db.commit()
+    return {"cached": False, **result}
 
 
 @router.patch("/{document_id}/sensitive")
