@@ -62,6 +62,146 @@ function validateFile(file) {
   return null;
 }
 
+const DIFF_LABELS = {
+  document_type: "Document Type",
+  vendor_name: "Vendor",
+  invoice_number: "Invoice #",
+  invoice_date: "Invoice Date",
+  total_amount: "Amount",
+  gstin: "GSTIN",
+  tax_amount: "Tax",
+  hsn_codes: "HSN Codes",
+};
+
+function fmtVal(v) {
+  if (v === null || v === undefined || v === "") return "—";
+  return String(v);
+}
+
+function VersionDrawer({ doc, authFetch, onClose }) {
+  const [versions, setVersions] = useState([]);
+  const [grouped, setGrouped] = useState(false);
+  const [loading, setLoading] = useState(true);
+  const [loadErr, setLoadErr] = useState(null);
+  const [fromId, setFromId] = useState(null);
+  const [toId, setToId] = useState(null);
+  const [diff, setDiff] = useState(null);
+  const [diffLoading, setDiffLoading] = useState(false);
+  const [diffErr, setDiffErr] = useState(null);
+
+  useEffect(() => {
+    let alive = true;
+    (async () => {
+      setLoading(true); setLoadErr(null);
+      try {
+        const res = await authFetch(`/api/documents/${doc.id}/versions`);
+        const data = await res.json();
+        if (!alive) return;
+        if (!res.ok) { setLoadErr(data.detail || "Failed to load versions."); return; }
+        const vs = data.versions || [];
+        setVersions(vs);
+        setGrouped(!!data.grouped);
+        if (vs.length >= 2) { setFromId(vs[0].id); setToId(vs[vs.length - 1].id); }
+      } catch (e) {
+        if (alive) setLoadErr("Network error loading versions.");
+      } finally {
+        if (alive) setLoading(false);
+      }
+    })();
+    return () => { alive = false; };
+  }, [doc.id]);
+
+  async function runDiff() {
+    if (fromId == null || toId == null) return;
+    setDiffLoading(true); setDiffErr(null); setDiff(null);
+    try {
+      const res = await authFetch(`/api/documents/diff?from=${fromId}&to=${toId}`);
+      const data = await res.json();
+      if (!res.ok) { setDiffErr(data.detail || "Diff failed."); return; }
+      setDiff(data);
+    } catch (e) {
+      setDiffErr("Network error running diff.");
+    } finally {
+      setDiffLoading(false);
+    }
+  }
+
+  return (
+    <div onClick={onClose} style={{ position: "fixed", inset: 0, background: "rgba(0,0,0,0.55)", zIndex: 50, display: "flex", justifyContent: "flex-end" }}>
+      <div onClick={(e) => e.stopPropagation()} style={{ width: "min(560px, 92vw)", height: "100%", background: T.bg.panel, borderLeft: T.border.strong, overflowY: "auto", display: "flex", flexDirection: "column" }}>
+        <div style={{ padding: "18px 22px", borderBottom: T.border.hairline, display: "flex", justifyContent: "space-between", alignItems: "flex-start", position: "sticky", top: 0, background: T.bg.panel, zIndex: 1 }}>
+          <div>
+            <Chrome>Version History</Chrome>
+            <h2 style={{ margin: "3px 0 0 0", fontSize: "14px", fontWeight: 600, color: T.text.primary, overflow: "hidden", textOverflow: "ellipsis", whiteSpace: "nowrap", maxWidth: "380px" }}>{doc.filename}</h2>
+          </div>
+          <button onClick={onClose} style={{ background: "none", border: T.border.hairline, color: T.text.muted, cursor: "pointer", fontSize: "10px", fontWeight: "bold", padding: "5px 12px", borderRadius: "6px", fontFamily: T.font.mono, letterSpacing: "0.05em" }}>CLOSE</button>
+        </div>
+
+        <div style={{ padding: "20px 22px", display: "flex", flexDirection: "column", gap: "20px" }}>
+          {loading ? (
+            <div style={{ color: T.text.muted, fontFamily: T.font.mono, fontSize: "12px" }}>Loading timeline…</div>
+          ) : loadErr ? (
+            <div style={{ color: T.semantic.error, fontFamily: T.font.mono, fontSize: "12px" }}>{loadErr}</div>
+          ) : (
+            <>
+              <div>
+                <Chrome>Timeline</Chrome>
+                {!grouped && (
+                  <p style={{ color: T.text.faint, fontFamily: T.font.mono, fontSize: "10px", margin: "6px 0 0 0" }}>Standalone document — no promoted versions yet.</p>
+                )}
+                <div style={{ marginTop: "10px", display: "flex", flexDirection: "column", gap: "8px" }}>
+                  {versions.map((v) => (
+                    <div key={v.id} style={{ display: "flex", alignItems: "center", gap: "12px", padding: "10px 12px", borderRadius: "8px", border: v.is_latest ? T.border.violet : T.border.hairline, background: v.is_latest ? "rgba(124,92,255,0.05)" : T.bg.card }}>
+                      <span className="tabular-nums" style={{ fontFamily: T.font.mono, fontSize: "11px", fontWeight: "bold", color: T.accent.bright, minWidth: "28px" }}>v{v.version_number}</span>
+                      <span style={{ flex: 1, fontSize: "12px", color: T.text.primary, fontWeight: 500, overflow: "hidden", textOverflow: "ellipsis", whiteSpace: "nowrap" }}>{v.filename}</span>
+                      {v.is_latest && <span style={{ padding: "2px 8px", borderRadius: "4px", fontSize: "8px", fontFamily: T.font.mono, fontWeight: "bold", background: "rgba(124,92,255,0.1)", color: T.accent.bright, letterSpacing: "0.05em" }}>LATEST</span>}
+                    </div>
+                  ))}
+                </div>
+              </div>
+
+              {versions.length >= 2 && (
+                <div>
+                  <Chrome>Compare Versions</Chrome>
+                  <div style={{ marginTop: "10px", display: "flex", alignItems: "center", gap: "10px", flexWrap: "wrap" }}>
+                    <select value={fromId ?? ""} onChange={(e) => setFromId(Number(e.target.value))} style={{ background: T.bg.card, color: T.text.primary, border: T.border.hairline, borderRadius: "6px", padding: "6px 10px", fontFamily: T.font.mono, fontSize: "11px" }}>
+                      {versions.map((v) => <option key={v.id} value={v.id}>v{v.version_number}</option>)}
+                    </select>
+                    <span style={{ color: T.text.faint, fontFamily: T.font.mono, fontSize: "11px" }}>→</span>
+                    <select value={toId ?? ""} onChange={(e) => setToId(Number(e.target.value))} style={{ background: T.bg.card, color: T.text.primary, border: T.border.hairline, borderRadius: "6px", padding: "6px 10px", fontFamily: T.font.mono, fontSize: "11px" }}>
+                      {versions.map((v) => <option key={v.id} value={v.id}>v{v.version_number}</option>)}
+                    </select>
+                    <button onClick={runDiff} disabled={diffLoading} style={{ background: "rgba(124,92,255,0.1)", border: T.border.violet, color: T.accent.bright, cursor: diffLoading ? "default" : "pointer", fontSize: "10px", fontWeight: "bold", padding: "6px 14px", borderRadius: "6px", fontFamily: T.font.mono, letterSpacing: "0.05em" }}>{diffLoading ? "…" : "DIFF"}</button>
+                  </div>
+
+                  {diffErr && <div style={{ marginTop: "10px", color: T.semantic.error, fontFamily: T.font.mono, fontSize: "11px" }}>{diffErr}</div>}
+
+                  {diff && (
+                    <div style={{ marginTop: "14px" }}>
+                      <p className="tabular-nums" style={{ fontFamily: T.font.mono, fontSize: "10px", color: T.text.muted, margin: "0 0 8px 0" }}>
+                        v{diff.from.version_number} → v{diff.to.version_number} · <span style={{ color: diff.changed_count > 0 ? T.semantic.warning : T.semantic.success, fontWeight: "bold" }}>{diff.changed_count} changed</span>
+                      </p>
+                      <div style={{ border: T.border.hairline, borderRadius: "8px", overflow: "hidden" }}>
+                        {diff.fields.map((f, i) => (
+                          <div key={f.field} style={{ display: "grid", gridTemplateColumns: "110px 1fr 1fr", gap: "8px", padding: "8px 12px", borderBottom: i < diff.fields.length - 1 ? T.border.hairline : "none", background: f.changed ? "rgba(210,153,34,0.05)" : "transparent", alignItems: "center" }}>
+                            <span style={{ fontFamily: T.font.mono, fontSize: "10px", color: f.changed ? T.semantic.warning : T.text.faint, fontWeight: f.changed ? "bold" : 500 }}>{DIFF_LABELS[f.field] || f.field}</span>
+                            <span style={{ fontSize: "11px", color: T.text.muted, overflow: "hidden", textOverflow: "ellipsis", whiteSpace: "nowrap" }}>{fmtVal(f.from)}</span>
+                            <span style={{ fontSize: "11px", color: f.changed ? T.text.primary : T.text.muted, fontWeight: f.changed ? 600 : 400, overflow: "hidden", textOverflow: "ellipsis", whiteSpace: "nowrap" }}>{fmtVal(f.to)}</span>
+                          </div>
+                        ))}
+                      </div>
+                    </div>
+                  )}
+                </div>
+              )}
+            </>
+          )}
+        </div>
+      </div>
+    </div>
+  );
+}
+
 export default function Vault() {
   const { authFetch } = useAuth();
   const [documents, setDocuments] = useState([]);
@@ -71,6 +211,7 @@ export default function Vault() {
   const [error, setError] = useState(null);
   const fileInputRef = useRef(null);
   const uidRef = useRef(0);
+  const [versionDoc, setVersionDoc] = useState(null);
 
 
   useEffect(() => { fetchDocuments(); }, []);
@@ -182,6 +323,7 @@ export default function Vault() {
         .ds-row { transition: background-color 0.1s; }
         .ds-row:hover { background-color: rgba(255,255,255,0.015); }
         .ds-delete:hover { color: ${T.semantic.error} !important; background-color: rgba(248,81,73,0.08) !important; }
+        .ds-versions:hover { color: ${T.accent.bright} !important; border-color: rgba(124,92,255,0.35) !important; background-color: rgba(124,92,255,0.08) !important; }
         .ds-clear:hover { color: ${T.text.secondary} !important; border-color: rgba(255,255,255,0.14) !important; }
       `}</style>
 
@@ -338,8 +480,17 @@ export default function Vault() {
                           <span style={{ width: "4px", height: "4px", borderRadius: "50%", backgroundColor: st.color }} />{(doc.processing_status || "unknown").toUpperCase()}
                         </span>
                       </td>
-                      <td style={{ padding: "12px 20px", textAlign: "right" }}>
-                        <button onClick={() => deleteDocument(doc.id)} className="ds-delete" style={{ background: "none", border: "none", color: T.text.muted, cursor: "pointer", fontSize: "10px", fontWeight: "bold", padding: "4px 8px", borderRadius: "4px", fontFamily: T.font.mono, letterSpacing: "0.05em", transition: "all 0.1s" }}>DELETE</button>
+                      <td style={{ padding: "12px 20px" }}>
+                        <div style={{ display: "flex", gap: "8px", justifyContent: "flex-end" }}>
+                          <button onClick={() => setVersionDoc(doc)} className="ds-versions" style={{ display: "inline-flex", alignItems: "center", gap: "6px", background: "none", border: T.border.hairline, color: T.text.muted, cursor: "pointer", fontSize: "10px", fontWeight: "bold", padding: "5px 10px", borderRadius: "6px", fontFamily: T.font.mono, letterSpacing: "0.05em", transition: "all 0.1s" }}>
+                            <svg width="12" height="12" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round"><path d="M3 3v5h5" /><path d="M3.05 13A9 9 0 1 0 6 5.3L3 8" /><path d="M12 7v5l4 2" /></svg>
+                            VERSIONS
+                          </button>
+                          <button onClick={() => deleteDocument(doc.id)} className="ds-delete" style={{ display: "inline-flex", alignItems: "center", gap: "6px", background: "none", border: T.border.hairline, color: T.text.muted, cursor: "pointer", fontSize: "10px", fontWeight: "bold", padding: "5px 10px", borderRadius: "6px", fontFamily: T.font.mono, letterSpacing: "0.05em", transition: "all 0.1s" }}>
+                            <svg width="12" height="12" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round"><path d="M3 6h18" /><path d="M8 6V4a2 2 0 0 1 2-2h4a2 2 0 0 1 2 2v2" /><path d="M19 6l-1 14a2 2 0 0 1-2 2H8a2 2 0 0 1-2-2L5 6" /></svg>
+                            DELETE
+                          </button>
+                        </div>
                       </td>
                     </tr>
                   );
@@ -349,6 +500,9 @@ export default function Vault() {
           </div>
         )}
       </div>
+      {versionDoc && (
+        <VersionDrawer doc={versionDoc} authFetch={authFetch} onClose={() => setVersionDoc(null)} />
+      )}
     </div>
   );
 }
