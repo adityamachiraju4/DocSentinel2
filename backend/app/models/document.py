@@ -58,6 +58,8 @@ class Document(Base):
     is_latest = Column(Boolean, nullable=True)
     verification_status = Column(String, nullable=False, default="AI_EXTRACTED")  # AI_EXTRACTED | NEEDS_REVIEW | VERIFIED
     verified_fields_count = Column(Integer, nullable=False, default=0)
+    # Trash / Recovery (Sprint D) — NULL = live, timestamp = trashed. Purge destroys row.
+    deleted_at = Column(DateTime, nullable=True)
     total_verifiable_fields = Column(Integer, nullable=False, default=0)
 
     # Timestamps
