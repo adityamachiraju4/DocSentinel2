@@ -15,6 +15,10 @@ from sqlalchemy import or_
 
 from app.models.document import Document
 
+# Trash retention window (days). Single source of truth for the
+# 30-day recovery period; enforced on restore and shown in the trash list.
+TRASH_RETENTION_DAYS = 30
+
 
 def latest_only(q):
     """Restrict to the version-visible set.

@@ -47,7 +47,8 @@ from app.services import verification_rules as vrules
 from app.services import audit_service
 from app.services import duplicate_service
 from app.services import versioning_service
-from app.services.document_query import latest_only, include_versions, exclude_trashed
+from sqlalchemy import func
+from app.services.document_query import latest_only, include_versions, exclude_trashed, only_trashed, TRASH_RETENTION_DAYS
 from app.models.audit_event import AuditEvent
 
 router = APIRouter(prefix="/documents", tags=["documents"])
@@ -150,6 +151,46 @@ async def upload_document(
         },
         "duplicate_matches": duplicate_matches,
     }
+
+
+@router.get("/trash")
+def list_trash(
+    db: Session = Depends(get_db),
+    current_user: User = Depends(get_current_user),
+):
+    """List the current user's trashed documents, most recently trashed first.
+    days_remaining is the real computed remainder of the 30-day recovery
+    window (deleted_at + retention - now), floored at 0. Never fabricated.
+    A doc at 0 days is expired and can no longer be restored (awaits purge)."""
+    from datetime import datetime, timedelta
+    import math
+
+    docs = (
+        only_trashed(
+            db.query(Document).filter(Document.user_id == current_user.id)
+        )
+        .order_by(Document.deleted_at.desc())
+        .all()
+    )
+    now = datetime.utcnow()
+    items = []
+    for doc in docs:
+        days_remaining = 0
+        if doc.deleted_at is not None:
+            cutoff = doc.deleted_at + timedelta(days=TRASH_RETENTION_DAYS)
+            remaining = cutoff - now
+            days_remaining = max(0, math.ceil(remaining.total_seconds() / 86400))
+        items.append({
+            "id": doc.id,
+            "original_filename": doc.original_filename,
+            "filename": doc.filename,
+            "deleted_at": doc.deleted_at,
+            "created_at": doc.created_at,
+            "days_remaining": days_remaining,
+            "expired": days_remaining == 0,
+        })
+    return {"retention_days": TRASH_RETENTION_DAYS, "count": len(items), "items": items}
+
 
 @router.get("/stats")
 def get_stats(
@@ -256,19 +297,61 @@ def delete_document(
     db: Session = Depends(get_db),
     current_user: User = Depends(get_current_user),
 ):
+    # Soft-delete: move to trash (deleted_at set), preserving the row, the
+    # R2 object, audit history, and any group/version linkage until purge.
+    # Only live docs are trashable; an already-trashed doc 404s (no existence
+    # disclosure — matches read-path behavior).
     doc = (
-        db.query(Document)
-        .filter(Document.id == document_id, Document.user_id == current_user.id)
+        exclude_trashed(
+            db.query(Document)
+            .filter(Document.id == document_id, Document.user_id == current_user.id)
+        )
         .first()
     )
     if not doc:
         raise HTTPException(status_code=404, detail="Document not found.")
-
-    audit_service.log_event(db, current_user.id, audit_service.DELETE, document_id=doc.id, request=request)
-    db.delete(doc)
+    doc.deleted_at = func.now()
     current_user.documents_used = max(0, current_user.documents_used - 1)
     db.commit()
-    return {"message": "Document deleted successfully."}
+    audit_service.log_event(db, current_user.id, audit_service.DOCUMENT_TRASHED, document_id=doc.id, request=request)
+    return {"message": "Document moved to trash."}
+
+
+@router.post("/{document_id}/restore")
+def restore_document(
+    document_id: int,
+    request: Request,
+    db: Session = Depends(get_db),
+    current_user: User = Depends(get_current_user),
+):
+    """Restore a trashed document back to the live vault. Owner-only.
+    404 if not found / not owned / already live (only_trashed won't match a
+    live doc). 409 if the 30-day recovery window has elapsed (expired —
+    cannot restore; the row awaits manual purge)."""
+    from datetime import datetime, timedelta
+
+    doc = (
+        only_trashed(
+            db.query(Document)
+            .filter(Document.id == document_id, Document.user_id == current_user.id)
+        )
+        .first()
+    )
+    if not doc:
+        raise HTTPException(status_code=404, detail="Document not found.")
+    # deleted_at is a server-side (func.now) UTC timestamp; compare naive-UTC.
+    if doc.deleted_at is not None:
+        cutoff = doc.deleted_at + timedelta(days=TRASH_RETENTION_DAYS)
+        if datetime.utcnow() > cutoff:
+            raise HTTPException(
+                status_code=409,
+                detail="Recovery window has expired; this document can no longer be restored.",
+            )
+    doc.deleted_at = None
+    current_user.documents_used = current_user.documents_used + 1
+    db.commit()
+    audit_service.log_event(db, current_user.id, audit_service.DOCUMENT_RESTORED, document_id=doc.id, request=request)
+    return {"message": "Document restored."}
 
 
 @router.post("/{document_id}/summarize")
