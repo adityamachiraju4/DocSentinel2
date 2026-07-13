@@ -47,7 +47,7 @@ from app.services import verification_rules as vrules
 from app.services import audit_service
 from app.services import duplicate_service
 from app.services import versioning_service
-from app.services.document_query import latest_only, include_versions
+from app.services.document_query import latest_only, include_versions, exclude_trashed
 from app.models.audit_event import AuditEvent
 
 router = APIRouter(prefix="/documents", tags=["documents"])
@@ -161,8 +161,9 @@ def get_stats(
 
     # 1. All documents belonging to this user
     all_docs = (
-        db.query(Document)
-        .filter(Document.user_id == current_user.id)
+        exclude_trashed(
+            db.query(Document).filter(Document.user_id == current_user.id)
+        )
         .all()
     )
 
@@ -281,8 +282,10 @@ def summarize_document(
     Cached in documents.summary (JSON). Regenerates only when force=true or no
     cached summary exists. 404 on not-found/not-owned (no existence disclosure)."""
     doc = (
-        db.query(Document)
-        .filter(Document.id == document_id, Document.user_id == current_user.id)
+        exclude_trashed(
+            db.query(Document)
+            .filter(Document.id == document_id, Document.user_id == current_user.id)
+        )
         .first()
     )
     if not doc:
@@ -351,8 +354,10 @@ def set_sensitive_override(
     current_user: User = Depends(get_current_user),
 ):
     doc = (
-        db.query(Document)
-        .filter(Document.id == document_id, Document.user_id == current_user.id)
+        exclude_trashed(
+            db.query(Document)
+            .filter(Document.id == document_id, Document.user_id == current_user.id)
+        )
         .first()
     )
     if not doc:
@@ -388,8 +393,10 @@ def update_field(
     if field_name not in vrf.VERIFIABLE_FIELDS:
         raise HTTPException(status_code=400, detail="Field is not verifiable.")
     doc = (
-        db.query(Document)
-        .filter(Document.id == document_id, Document.user_id == current_user.id)
+        exclude_trashed(
+            db.query(Document)
+            .filter(Document.id == document_id, Document.user_id == current_user.id)
+        )
         .first()
     )
     if not doc:
@@ -482,8 +489,10 @@ def verify_field(
     if field_name not in vrf.VERIFIABLE_FIELDS:
         raise HTTPException(status_code=400, detail="Field is not verifiable.")
     doc = (
-        db.query(Document)
-        .filter(Document.id == document_id, Document.user_id == current_user.id)
+        exclude_trashed(
+            db.query(Document)
+            .filter(Document.id == document_id, Document.user_id == current_user.id)
+        )
         .first()
     )
     if not doc:
@@ -521,8 +530,10 @@ def verify_document(
     current_user: User = Depends(get_current_user),
 ):
     doc = (
-        db.query(Document)
-        .filter(Document.id == document_id, Document.user_id == current_user.id)
+        exclude_trashed(
+            db.query(Document)
+            .filter(Document.id == document_id, Document.user_id == current_user.id)
+        )
         .first()
     )
     if not doc:
@@ -563,8 +574,10 @@ def reset_field(
     if field_name not in vrf.VERIFIABLE_FIELDS:
         raise HTTPException(status_code=400, detail="Field is not verifiable.")
     doc = (
-        db.query(Document)
-        .filter(Document.id == document_id, Document.user_id == current_user.id)
+        exclude_trashed(
+            db.query(Document)
+            .filter(Document.id == document_id, Document.user_id == current_user.id)
+        )
         .first()
     )
     if not doc:
@@ -621,8 +634,10 @@ def resolve_suggestion(
     if field_name not in vrf.VERIFIABLE_FIELDS:
         raise HTTPException(status_code=400, detail="Field is not verifiable.")
     doc = (
-        db.query(Document)
-        .filter(Document.id == document_id, Document.user_id == current_user.id)
+        exclude_trashed(
+            db.query(Document)
+            .filter(Document.id == document_id, Document.user_id == current_user.id)
+        )
         .first()
     )
     if not doc:
@@ -673,7 +688,9 @@ def list_documents(
 ):
     docs = (
         latest_only(
-            db.query(Document).filter(Document.user_id == current_user.id)
+            exclude_trashed(
+                db.query(Document).filter(Document.user_id == current_user.id)
+            )
         )
         .order_by(Document.created_at.desc())
         .all()
@@ -718,7 +735,7 @@ def search_documents(
         return {"documents": [], "query": "", "ranked": False}
 
     dialect = db.bind.dialect.name
-    base = latest_only(db.query(Document).filter(Document.user_id == current_user.id))
+    base = latest_only(exclude_trashed(db.query(Document).filter(Document.user_id == current_user.id)))
 
     if dialect == "postgresql":
         docs = (
@@ -801,8 +818,10 @@ def diff_document_versions(
     """
     def _load(doc_id):
         return (
-            db.query(Document)
-            .filter(Document.id == doc_id, Document.user_id == current_user.id)
+            exclude_trashed(
+                db.query(Document)
+                .filter(Document.id == doc_id, Document.user_id == current_user.id)
+            )
             .first()
         )
 
@@ -864,8 +883,10 @@ def get_document_versions(
     upload time). 404 on not-found/not-owned (no existence disclosure).
     """
     doc = (
-        db.query(Document)
-        .filter(Document.id == document_id, Document.user_id == current_user.id)
+        exclude_trashed(
+            db.query(Document)
+            .filter(Document.id == document_id, Document.user_id == current_user.id)
+        )
         .first()
     )
     if not doc:
@@ -876,7 +897,7 @@ def get_document_versions(
     else:
         members = (
             include_versions(
-                db.query(Document).filter(
+                exclude_trashed(db.query(Document)).filter(
                     Document.user_id == current_user.id,
                     Document.group_id == doc.group_id,
                 )
@@ -916,8 +937,10 @@ def get_verification_context(
     computed on each call and never persisted. 404 on non-owned/missing doc.
     """
     doc = (
-        db.query(Document)
-        .filter(Document.id == document_id, Document.user_id == current_user.id)
+        exclude_trashed(
+            db.query(Document)
+            .filter(Document.id == document_id, Document.user_id == current_user.id)
+        )
         .first()
     )
     if not doc:
@@ -967,8 +990,10 @@ def get_document_file(
     Inline by default (browser preview); attachment if download=true.
     """
     doc = (
-        db.query(Document)
-        .filter(Document.id == document_id, Document.user_id == current_user.id)
+        exclude_trashed(
+            db.query(Document)
+            .filter(Document.id == document_id, Document.user_id == current_user.id)
+        )
         .first()
     )
     if not doc:
@@ -1016,8 +1041,10 @@ def get_document_audit(
 ):
     """Return this document's audit timeline, newest first."""
     doc = (
-        db.query(Document)
-        .filter(Document.id == document_id, Document.user_id == current_user.id)
+        exclude_trashed(
+            db.query(Document)
+            .filter(Document.id == document_id, Document.user_id == current_user.id)
+        )
         .first()
     )
     if not doc:

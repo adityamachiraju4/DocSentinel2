@@ -33,3 +33,24 @@ def include_versions(q):
     rather than by the absence of a filter.
     """
     return q
+
+
+def exclude_trashed(q):
+    """Restrict to live documents: deleted_at IS NULL.
+
+    Soft-delete scope (Sprint D). Wire into EVERY user-facing read path.
+    A trashed row keeps its data, R2 object, group membership, and audit
+    history until purge, but must never surface in normal reads. Pairs
+    with only_trashed() for the trash view — the two together are the
+    single source of truth for trash visibility; no call site should
+    hand-roll a deleted_at filter.
+    """
+    return q.filter(Document.deleted_at.is_(None))
+
+
+def only_trashed(q):
+    """Inverse of exclude_trashed: restrict to trashed rows
+    (deleted_at IS NOT NULL). Used only by the trash listing and by
+    restore/purge lookups that must reach a trashed doc by id.
+    """
+    return q.filter(Document.deleted_at.isnot(None))
