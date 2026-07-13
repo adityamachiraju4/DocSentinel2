@@ -18,6 +18,7 @@ from app.models.document import Document
 from app.models.document_share import DocumentShare, STATUS_ACTIVE, STATUS_EXPIRED
 from app.services.storage_service import get_file
 from app.services import audit_service
+from app.services.document_query import exclude_trashed
 
 router = APIRouter(prefix="/shared", tags=["shared"])
 
@@ -103,7 +104,7 @@ def list_shared_with_me(
         exp = _aware(sh.expires_at)
         if exp is not None and exp <= now:
             continue  # hide past-expiry; list endpoint won't mutate here
-        doc = db.query(Document).filter(Document.id == sh.document_id).first()
+        doc = exclude_trashed(db.query(Document).filter(Document.id == sh.document_id)).first()
         if not doc or doc.effective_sensitive:
             continue  # sensitive docs never appear in a recipient's list
         owner = db.query(User).filter(User.id == sh.owner_id).first()
@@ -130,7 +131,7 @@ def get_shared_file(
     now = datetime.now(timezone.utc)
     share = _resolve_share(db, share_id, current_user, now)
 
-    doc = db.query(Document).filter(Document.id == share.document_id).first()
+    doc = exclude_trashed(db.query(Document).filter(Document.id == share.document_id)).first()
     if not doc:
         raise _NOT_FOUND
 

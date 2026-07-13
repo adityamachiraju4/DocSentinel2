@@ -7,6 +7,7 @@ Per-user scope. Warn-and-allow: callers surface matches, never block.
 from sqlalchemy.orm import Session
 from app.models.document import Document
 from app.services.verification_rules import resolve_vendor_key
+from app.services.document_query import exclude_trashed
 
 
 def _doc_vendor_key(doc: Document) -> str | None:
@@ -29,7 +30,7 @@ def find_duplicates(
     matches: list[dict] = []
     seen_ids: set[int] = set()
 
-    q = db.query(Document).filter(Document.user_id == user_id)
+    q = exclude_trashed(db.query(Document).filter(Document.user_id == user_id))
     if exclude_document_id is not None:
         q = q.filter(Document.id != exclude_document_id)
     candidates = q.all()

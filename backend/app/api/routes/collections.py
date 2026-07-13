@@ -10,6 +10,7 @@ from app.core.auth import get_current_user
 from app.models.user import User
 from app.models.document import Document
 from app.models.collection import Collection, DocumentCollection
+from app.services.document_query import exclude_trashed
 
 router = APIRouter(prefix="/collections", tags=["collections"])
 
@@ -26,13 +27,11 @@ def list_collections(
     collections = db.query(Collection).order_by(Collection.id).all()
 
     # Per-user counts: join links -> documents, filter by user, group by collection
-    counts_raw = (
+    counts_raw = exclude_trashed(
         db.query(DocumentCollection.collection_id, func.count(DocumentCollection.id))
         .join(Document, Document.id == DocumentCollection.document_id)
         .filter(Document.user_id == current_user.id)
-        .group_by(DocumentCollection.collection_id)
-        .all()
-    )
+    ).group_by(DocumentCollection.collection_id).all()
     counts = {cid: n for cid, n in counts_raw}
 
     return [
@@ -65,7 +64,7 @@ def collection_documents(
         raise HTTPException(status_code=404, detail="Collection not found.")
 
     docs = (
-        db.query(Document)
+        exclude_trashed(db.query(Document))
         .join(DocumentCollection, DocumentCollection.document_id == Document.id)
         .filter(
             DocumentCollection.collection_id == collection.id,

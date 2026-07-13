@@ -22,6 +22,7 @@ from app.models.document_share import (
     STATUS_REVOKED,
 )
 from app.services import audit_service
+from app.services.document_query import exclude_trashed
 
 router = APIRouter(prefix="/documents", tags=["shares"])
 
@@ -57,7 +58,7 @@ def create_share(
 ):
     # Owner-only: same ownership filter as every other document route.
     doc = (
-        db.query(Document)
+        exclude_trashed(db.query(Document))
         .filter(Document.id == document_id, Document.user_id == current_user.id)
         .first()
     )
@@ -179,7 +180,7 @@ def list_shares(
 ):
     # Owner-only.
     doc = (
-        db.query(Document)
+        exclude_trashed(db.query(Document))
         .filter(Document.id == document_id, Document.user_id == current_user.id)
         .first()
     )
