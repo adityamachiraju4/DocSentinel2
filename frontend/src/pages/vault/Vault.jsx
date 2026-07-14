@@ -295,7 +295,7 @@ export default function Vault() {
   }
 
   async function deleteDocument(id) {
-    if (!window.confirm("Delete this document? This cannot be undone.")) return;
+    if (!window.confirm("Move this document to trash? You can restore it within 30 days.")) return;
     try {
       const res = await authFetch(`/api/documents/${id}`, { method: "DELETE" });
       if (!res.ok) throw new Error("Delete failed");

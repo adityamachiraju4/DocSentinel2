@@ -15,6 +15,7 @@ import CollectionView from './pages/collections/CollectionView'
 import Dashboard from './pages/dashboard/Dashboard'
 // Module Pages
 import Vault from './pages/vault/Vault'
+import Trash from './pages/trash/Trash'
 import Invoices from './pages/invoices/Invoices'
 import Contracts from './pages/contracts/Contracts'
 import HR from './pages/hr/HR'
@@ -49,6 +50,7 @@ export default function App() {
         <Route path="/contracts" element={<Contracts />} />
         <Route path="/hr" element={<HR />} />
         <Route path="/settings" element={<Settings />} />
+        <Route path="/trash" element={<Trash />} />
         <Route path="/collections/:slug" element={<CollectionView />} />
       </Route>
       {/* Fallback */}
