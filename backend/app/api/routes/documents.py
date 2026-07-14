@@ -37,7 +37,7 @@ from app.core.database import get_db
 from app.core.auth import get_current_user
 from app.models.user import User
 from app.models.document import Document
-from app.services.storage_service import save_file, get_file
+from app.services.storage_service import save_file, get_file, delete_file
 from app.services.sensitive_detector import detect_sensitive
 from app.services.document_processor import classify_and_extract, generate_summary
 from pydantic import BaseModel
@@ -50,6 +50,8 @@ from app.services import versioning_service
 from sqlalchemy import func
 from app.services.document_query import latest_only, include_versions, exclude_trashed, only_trashed, TRASH_RETENTION_DAYS
 from app.models.audit_event import AuditEvent
+from app.models.collection import DocumentCollection
+from app.models.document_share import DocumentShare
 
 router = APIRouter(prefix="/documents", tags=["documents"])
 
@@ -352,6 +354,63 @@ def restore_document(
     db.commit()
     audit_service.log_event(db, current_user.id, audit_service.DOCUMENT_RESTORED, document_id=doc.id, request=request)
     return {"message": "Document restored."}
+
+
+@router.delete("/{document_id}/purge")
+def purge_document(
+    document_id: int,
+    request: Request,
+    db: Session = Depends(get_db),
+    current_user: User = Depends(get_current_user),
+):
+    """Permanently destroy a trashed document. Owner-only, irreversible.
+
+    Only a doc already in trash can be purged (only_trashed); a live doc,
+    a doc owned by someone else, or a non-existent id all 404 (no existence
+    disclosure). No recovery-window gate: manual permanent delete is always
+    available while trashed, whether or not the 30-day window has elapsed.
+
+    Order of operations: capture id + r2_key, explicitly unlink join rows
+    (document_collections, document_shares) since local SQLite FK enforcement
+    is OFF and DB-level CASCADE / passive_deletes won't fire, destroy the DB
+    row and commit (the authoritative state change), then best-effort delete
+    the R2 object, then emit DOCUMENT_PURGED. audit_events.document_id is
+    ON DELETE SET NULL, so the audit row survives with a nulled document_id;
+    we log with the captured id for the event record.
+
+    documents_used is NOT decremented here — the doc already left the live
+    count when it was trashed (soft-delete path).
+    """
+    doc = (
+        only_trashed(
+            db.query(Document)
+            .filter(Document.id == document_id, Document.user_id == current_user.id)
+        )
+        .first()
+    )
+    if not doc:
+        raise HTTPException(status_code=404, detail="Document not found.")
+
+    purged_id = doc.id
+    r2_key = doc.r2_key
+
+    # Explicit unlink — do NOT rely on FK CASCADE (SQLite enforcement off locally).
+    db.query(DocumentCollection).filter(DocumentCollection.document_id == purged_id).delete(synchronize_session=False)
+    db.query(DocumentShare).filter(DocumentShare.document_id == purged_id).delete(synchronize_session=False)
+
+    db.delete(doc)
+    db.commit()
+
+    # Best-effort R2 destroy after the authoritative DB commit. A missing or
+    # already-gone object must not resurrect a purged row; tolerate failure.
+    if r2_key:
+        try:
+            delete_file(r2_key)
+        except Exception:
+            pass
+
+    audit_service.log_event(db, current_user.id, audit_service.DOCUMENT_PURGED, document_id=purged_id, request=request)
+    return {"message": "Document permanently deleted."}
 
 
 @router.post("/{document_id}/summarize")
