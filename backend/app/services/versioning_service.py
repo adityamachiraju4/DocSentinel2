@@ -159,3 +159,80 @@ def promote_to_version(db: Session, user_id: int, new_doc_id: int,
         "version_number": new_doc.version_number,
         "is_latest": new_doc.is_latest,
     }
+
+
+def demote_trashed_latest(db: Session, doc: Document) -> int | None:
+    """Called when `doc` is being trashed (soft-deleted).
+
+    If `doc` is the latest version of a version group, clear its is_latest
+    flag and promote the highest-version_number NON-TRASHED sibling back to
+    latest (promote-in-reverse). Returns the promoted sibling's id, or None
+    if no promotion happened (doc not grouped, not latest, or no live
+    sibling to promote).
+
+    Candidate selection considers ONLY non-trashed siblings — a trashed
+    sibling must never become latest. current_version (the monotonic
+    allocator on the group row) is intentionally left untouched: it only
+    ever advances, so re-promotions still get fresh numbers.
+
+    Commit-free: the caller (delete handler) owns the transaction so the
+    deleted_at write and this flip commit atomically.
+    """
+    if doc.group_id is None or not doc.is_latest:
+        return None
+
+    doc.is_latest = False
+
+    candidate = (
+        db.query(Document)
+        .filter(
+            Document.group_id == doc.group_id,
+            Document.id != doc.id,
+            Document.deleted_at.is_(None),
+        )
+        .order_by(Document.version_number.desc())
+        .first()
+    )
+    if candidate is None:
+        # No live sibling — group temporarily has no latest. Correct: nothing
+        # live to surface. A later restore/re-promote re-establishes one.
+        return None
+
+    candidate.is_latest = True
+    return candidate.id
+
+
+def reclaim_latest_if_orphaned(db: Session, doc: Document) -> bool:
+    """Called when `doc` is being restored from trash.
+
+    Restore does NOT auto-reclaim latest in the general case — while `doc`
+    was trashed a sibling may have legitimately become latest (via
+    demote_trashed_latest or a later promotion), and clobbering that would
+    silently demote the current version. So `doc` returns as a NON-latest
+    group member by default.
+
+    The one exception: if `doc` is grouped and its group currently has NO
+    live is_latest member (the slot is empty — its own demotion emptied it
+    and nothing was promoted after), `doc` reclaims latest to preserve the
+    invariant "a group with >=1 live member has exactly one is_latest".
+
+    Returns True if `doc` reclaimed latest, else False. Commit-free: the
+    caller (restore handler) owns the transaction.
+    """
+    if doc.group_id is None:
+        return False
+
+    live_latest_exists = (
+        db.query(Document)
+        .filter(
+            Document.group_id == doc.group_id,
+            Document.deleted_at.is_(None),
+            Document.is_latest.is_(True),
+        )
+        .first()
+    )
+    if live_latest_exists is not None:
+        return False
+
+    doc.is_latest = True
+    return True

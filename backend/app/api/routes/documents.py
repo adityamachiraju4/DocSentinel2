@@ -313,6 +313,9 @@ def delete_document(
     if not doc:
         raise HTTPException(status_code=404, detail="Document not found.")
     doc.deleted_at = func.now()
+    # If this doc was the latest version of a group, promote the previous
+    # non-trashed sibling back to latest (commit-free; shares this txn).
+    versioning_service.demote_trashed_latest(db, doc)
     current_user.documents_used = max(0, current_user.documents_used - 1)
     db.commit()
     audit_service.log_event(db, current_user.id, audit_service.DOCUMENT_TRASHED, document_id=doc.id, request=request)
@@ -350,6 +353,9 @@ def restore_document(
                 detail="Recovery window has expired; this document can no longer be restored.",
             )
     doc.deleted_at = None
+    # Reclaim latest ONLY if the group has no live latest (empty slot);
+    # never clobber a sibling promoted while this doc was trashed.
+    versioning_service.reclaim_latest_if_orphaned(db, doc)
     current_user.documents_used = current_user.documents_used + 1
     db.commit()
     audit_service.log_event(db, current_user.id, audit_service.DOCUMENT_RESTORED, document_id=doc.id, request=request)
