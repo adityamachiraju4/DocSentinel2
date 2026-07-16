@@ -98,8 +98,12 @@ def redact_pdf(file_bytes: bytes) -> bytes:
                         for x in range(max(0, x0), min(pix.width, x1)):
                             pix.set_pixel(x, y, (0, 0, 0))
 
+                # JPEG-compress the masked pixels before embedding to keep
+                # output size practical; the text layer is gone either way,
+                # so compression cannot resurrect any redacted value.
+                img_bytes = pix.tobytes(output="jpg", jpg_quality=80)
                 new_page = out.new_page(width=page.rect.width, height=page.rect.height)
-                new_page.insert_image(page.rect, pixmap=pix)
+                new_page.insert_image(page.rect, stream=img_bytes)
 
             if total_matches != total_located:
                 raise RedactionError(
