@@ -39,6 +39,7 @@ from app.models.user import User
 from app.models.document import Document
 from app.services.storage_service import save_file, get_file, delete_file
 from app.services.sensitive_detector import detect_sensitive
+from app.services.redaction_service import redact_pdf, RedactionError
 from app.services.document_processor import classify_and_extract, generate_summary
 from pydantic import BaseModel
 from app.services.collection_router import route_document_to_collections
@@ -1212,3 +1213,97 @@ def get_document_audit(
         }
         for e in events
     ]
+
+
+
+@router.post("/{document_id}/redact")
+def redact_document(
+    document_id: int,
+    request: Request,
+    x_sensitive_grant: str = Header(default=""),
+    db: Session = Depends(get_db),
+    current_user: User = Depends(get_current_user),
+):
+    """Produce a genuinely redacted copy (image-based PDF, sensitive values
+    removed) as a new document. PDF sources only. Fails closed if a real
+    redaction cannot be guaranteed — never returns a file that merely appears
+    redacted.
+    """
+    doc = (
+        exclude_trashed(
+            db.query(Document)
+            .filter(Document.id == document_id, Document.user_id == current_user.id)
+        )
+        .first()
+    )
+    if not doc:
+        raise HTTPException(status_code=404, detail="Document not found.")
+
+    # Reading the source bytes is equivalent to viewing it — enforce the same
+    # sensitive re-auth gate.
+    if doc.effective_sensitive and not verify_sensitive_grant(x_sensitive_grant, current_user.id):
+        raise HTTPException(status_code=403, detail="sensitive_reauth_required")
+
+    if (doc.mime_type or "") != "application/pdf":
+        raise HTTPException(
+            status_code=400,
+            detail="Redaction is supported for PDF documents only.",
+        )
+
+    if not doc.r2_key:
+        raise HTTPException(status_code=404, detail="No file stored for this document.")
+
+    try:
+        source_bytes = get_file(doc.r2_key)
+    except Exception as e:
+        if "NoSuchKey" in type(e).__name__ or "NoSuchKey" in str(e):
+            raise HTTPException(status_code=404, detail="File not found in storage.")
+        raise HTTPException(status_code=500, detail="Could not retrieve file.")
+
+    try:
+        redacted_bytes = redact_pdf(source_bytes)
+    except RedactionError as e:
+        # Honest fail-closed: we could not guarantee the values were removed.
+        raise HTTPException(
+            status_code=422,
+            detail=f"Could not guarantee redaction: {e}",
+        )
+
+    import hashlib
+    redacted_name = "redacted-" + (doc.original_filename or "document.pdf")
+    storage_key = save_file(redacted_bytes, redacted_name)
+
+    new_doc = Document(
+        user_id=current_user.id,
+        filename=storage_key,
+        original_filename=redacted_name,
+        file_size=len(redacted_bytes),
+        mime_type="application/pdf",
+        r2_key=storage_key,
+        sha256=hashlib.sha256(redacted_bytes).hexdigest(),
+        document_type=doc.document_type,
+        module=doc.module,
+        extracted_text=None,
+        extraction_method="redaction",
+        # The values are verifiably stripped (redact_pdf asserts this), so
+        # marking the artifact non-sensitive is an honest claim, not a guess.
+        is_sensitive=False,
+        processing_status="completed",
+    )
+    db.add(new_doc)
+    current_user.documents_used += 1
+    db.commit()
+    db.refresh(new_doc)
+
+    audit_service.log_event(
+        db, current_user.id, audit_service.DOCUMENT_REDACTED,
+        document_id=doc.id, request=request,
+    )
+
+    return {
+        "id": new_doc.id,
+        "original_filename": new_doc.original_filename,
+        "file_size": new_doc.file_size,
+        "source_document_id": doc.id,
+    }
+
