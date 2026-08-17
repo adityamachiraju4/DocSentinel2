@@ -10,6 +10,15 @@ from app.core.config import get_settings
 settings = get_settings()
 client = Groq(api_key=settings.GROQ_API_KEY)
 
+# ── Groq model IDs (lifted to config for single-point swaps) ───────────────
+# Vision: qwen3.6-27b is Groq's only vision-capable model, served PREVIEW-tier
+# (evaluation, not production) — may be pulled at short notice. Watch for a
+# production-tier vision replacement. Prior model llama-4-scout retired 2026-06-17.
+VISION_MODEL = "qwen/qwen3.6-27b"
+# Text/summary: gpt-oss-120b is Groq's recommended production replacement for
+# llama-3.3-70b-versatile (also retired 2026-06-17). Text-only — do NOT use for vision.
+TEXT_MODEL = "openai/gpt-oss-120b"
+
 # Allowed values — anything outside these gets normalized to a safe default.
 _VALID_TYPES = {
     "invoice", "bill", "receipt", "contract", "payslip", "bank_statement",
@@ -175,11 +184,12 @@ def _extract_via_vision(image_bytes: bytes, mime_type: str, method: str) -> dict
 
     try:
         response = client.chat.completions.create(
-            model="meta-llama/llama-4-scout-17b-16e-instruct",
+            model=VISION_MODEL,
             messages=messages,
             temperature=0,
             seed=42,
             max_tokens=1500,
+            reasoning_effort="none",  # qwen3.6-27b: disable thinking so JSON mode returns clean output (no <think> preamble)
             response_format={"type": "json_object"},
         )
         result_text = _strip_fences(response.choices[0].message.content)
@@ -230,9 +240,10 @@ Return ONLY the JSON. No explanation. No markdown. No extra text."""
 
     try:
         response = client.chat.completions.create(
-            model="llama-3.3-70b-versatile",
+            model=TEXT_MODEL,
             messages=[{"role": "user", "content": prompt}],
             temperature=0,
+            reasoning_effort="low",  # gpt-oss-120b: floor reasoning (none is invalid for gpt-oss); minimizes reasoning tokens so JSON fits budget
             seed=42,
             max_tokens=1500,
             response_format={"type": "json_object"},
@@ -313,11 +324,12 @@ Return ONLY the JSON. No explanation. No markdown. No extra text."""
 
     try:
         response = client.chat.completions.create(
-            model="llama-3.3-70b-versatile",
+            model=TEXT_MODEL,
             messages=[{"role": "user", "content": prompt}],
             temperature=0,
+            reasoning_effort="low",  # gpt-oss-120b: floor reasoning (none is invalid for gpt-oss); minimizes reasoning tokens so JSON fits budget
             seed=42,
-            max_tokens=800,
+            max_tokens=2000,
             response_format={"type": "json_object"},
         )
         result_text = _strip_fences(response.choices[0].message.content)
