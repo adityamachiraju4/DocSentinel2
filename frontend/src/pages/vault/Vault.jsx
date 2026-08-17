@@ -203,7 +203,7 @@ function VersionDrawer({ doc, authFetch, onClose }) {
 }
 
 export default function Vault() {
-  const { authFetch } = useAuth();
+  const { authFetch, sensitiveReauth } = useAuth();
   const [documents, setDocuments] = useState([]);
   const [queue, setQueue] = useState([]); // [{ id, name, size, status, error }]
   const [batchActive, setBatchActive] = useState(false);
@@ -212,6 +212,7 @@ export default function Vault() {
   const fileInputRef = useRef(null);
   const uidRef = useRef(0);
   const [versionDoc, setVersionDoc] = useState(null);
+  const [redactStatus, setRedactStatus] = useState({});
 
 
   useEffect(() => { fetchDocuments(); }, []);
@@ -303,6 +304,38 @@ export default function Vault() {
     } catch (err) { setError("Failed to delete document."); }
   }
 
+  async function redactDocument(id) {
+    if (!window.confirm("Create a redacted copy with sensitive data permanently removed? The redacted document is a new file — the original is untouched.")) return;
+    setRedactStatus((m) => ({ ...m, [id]: "working" }));
+    async function attempt() {
+      return authFetch(`/api/documents/${id}/redact`, { method: "POST" });
+    }
+    try {
+      let res = await attempt();
+      if (res.status === 403) {
+        const data = await res.json().catch(() => ({}));
+        if (data.detail === "sensitive_reauth_required") {
+          const pw = window.prompt("This document is sensitive. Re-enter your password to authorize redaction:");
+          if (!pw) { setRedactStatus((m) => ({ ...m, [id]: undefined })); return; }
+          const ok = await sensitiveReauth(pw);
+          if (!ok) { setRedactStatus((m) => ({ ...m, [id]: "error" })); setError("Re-authentication failed."); return; }
+          res = await attempt();
+        }
+      }
+      if (res.status === 422) {
+        const data = await res.json().catch(() => ({}));
+        setRedactStatus((m) => ({ ...m, [id]: "error" }));
+        setError(typeof data.detail === "string" ? data.detail : "Could not guarantee redaction — no file was produced.");
+        return;
+      }
+      if (!res.ok) throw new Error("Redaction failed");
+      setRedactStatus((m) => ({ ...m, [id]: "done" }));
+      fetchDocuments();
+    } catch (err) {
+      setRedactStatus((m) => ({ ...m, [id]: "error" }));
+      setError("Failed to redact document.");
+    }
+  }
   function handleDrop(e) { e.preventDefault(); setDragOver(false); if (e.dataTransfer.files?.length) handleFiles(e.dataTransfer.files); }
   function handleFileInput(e) { if (e.target.files?.length) handleFiles(e.target.files); e.target.value = ""; }
   function clearQueue() { setQueue([]); }
@@ -324,6 +357,7 @@ export default function Vault() {
         .ds-row:hover { background-color: rgba(255,255,255,0.015); }
         .ds-delete:hover { color: ${T.semantic.error} !important; background-color: rgba(248,81,73,0.08) !important; }
         .ds-versions:hover { color: ${T.accent.bright} !important; border-color: rgba(124,92,255,0.35) !important; background-color: rgba(124,92,255,0.08) !important; }
+        .ds-redact:hover { color: ${T.semantic.info} !important; border-color: rgba(88,166,255,0.35) !important; background-color: rgba(88,166,255,0.08) !important; }
         .ds-clear:hover { color: ${T.text.secondary} !important; border-color: rgba(255,255,255,0.14) !important; }
       `}</style>
 
@@ -482,6 +516,10 @@ export default function Vault() {
                       </td>
                       <td style={{ padding: "12px 20px" }}>
                         <div style={{ display: "flex", gap: "8px", justifyContent: "flex-end" }}>
+                          <button onClick={() => redactDocument(doc.id)} className="ds-redact" disabled={redactStatus[doc.id] === "working"} style={{ display: "inline-flex", alignItems: "center", gap: "6px", background: "none", border: T.border.hairline, color: redactStatus[doc.id] === "done" ? T.semantic.success : redactStatus[doc.id] === "error" ? T.semantic.error : T.text.muted, cursor: redactStatus[doc.id] === "working" ? "default" : "pointer", fontSize: "10px", fontWeight: "bold", padding: "5px 10px", borderRadius: "6px", fontFamily: T.font.mono, letterSpacing: "0.05em", transition: "all 0.1s", opacity: redactStatus[doc.id] === "working" ? 0.6 : 1 }}>
+                            <svg width="12" height="12" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round"><rect x="3" y="5" width="18" height="14" rx="2" /><path d="M7 10h6" /><path d="M7 14h4" /></svg>
+                            {redactStatus[doc.id] === "working" ? "REDACTING…" : redactStatus[doc.id] === "done" ? "REDACTED" : "REDACT"}
+                          </button>
                           <button onClick={() => setVersionDoc(doc)} className="ds-versions" style={{ display: "inline-flex", alignItems: "center", gap: "6px", background: "none", border: T.border.hairline, color: T.text.muted, cursor: "pointer", fontSize: "10px", fontWeight: "bold", padding: "5px 10px", borderRadius: "6px", fontFamily: T.font.mono, letterSpacing: "0.05em", transition: "all 0.1s" }}>
                             <svg width="12" height="12" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round"><path d="M3 3v5h5" /><path d="M3.05 13A9 9 0 1 0 6 5.3L3 8" /><path d="M12 7v5l4 2" /></svg>
                             VERSIONS
