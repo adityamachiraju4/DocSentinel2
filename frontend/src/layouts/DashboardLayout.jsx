@@ -160,7 +160,7 @@ export default function DashboardLayout() {
         <div style={{ padding: "16px", borderTop: T.border.hairline }}>
           <div style={{ display: "flex", alignItems: "center", gap: "8px" }}>
             <span style={{ width: "6px", height: "6px", borderRadius: "50%", backgroundColor: T.semantic.success, display: "inline-block" }} />
-            <span style={{ fontSize: "10px", fontFamily: T.font.mono, color: T.text.muted, letterSpacing: "0.05em" }}>AES-256 · ASIA PACIFIC</span>
+            <span style={{ fontSize: "10px", fontFamily: T.font.mono, color: T.text.muted, letterSpacing: "0.05em" }}>AES-256 · ENCRYPTED AT REST</span>
           </div>
         </div>
       </aside>

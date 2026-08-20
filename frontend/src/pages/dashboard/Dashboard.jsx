@@ -244,10 +244,10 @@ export default function Dashboard() {
         <Panel chrome="Spend Analysis" title="Amount by Vendor (₹)">
           <div style={{ width: "100%", height: "220px" }}>
             <ResponsiveContainer width="100%" height="100%">
-              <BarChart data={stats.vendor_data} layout="vertical" margin={{ top: 10, right: 10, left: 30, bottom: 5 }}>
+              <BarChart data={stats.vendor_data} layout="vertical" margin={{ top: 10, right: 10, left: 40, bottom: 5 }}>
                 <CartesianGrid strokeDasharray="3 3" horizontal={false} stroke="rgba(255,255,255,0.05)" />
                 <XAxis type="number" stroke={T.text.faint} fontSize={10} fontFamily={T.font.mono} tickFormatter={(v) => `₹${(v / 1000).toFixed(0)}k`} tickLine={false} />
-                <YAxis type="category" dataKey="vendor" stroke={T.text.secondary} fontSize={10} fontFamily={T.font.mono} tickLine={false} axisLine={false} width={120} />
+                <YAxis type="category" dataKey="vendor" stroke={T.text.secondary} fontSize={10} fontFamily={T.font.mono} tickLine={false} axisLine={false} width={170} tickFormatter={(v) => (v && v.length > 16 ? v.slice(0, 15) + "…" : v)} />
                 <Tooltip content={<CustomTooltip isAmount />} cursor={{ fill: "rgba(255,255,255,0.02)" }} />
                 <Bar dataKey="amount" name="Amount" fill={T.semantic.info} radius={[0, 4, 4, 0]} maxBarSize={20} />
               </BarChart>

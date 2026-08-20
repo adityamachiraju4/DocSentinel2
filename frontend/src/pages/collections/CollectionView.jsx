@@ -445,7 +445,7 @@ function PreviewPane({ doc, onDeleted }) {
           <div style={{ fontSize: "10px", fontFamily: T.font.mono, letterSpacing: "0.1em", color: T.text.faint, textTransform: "uppercase", marginBottom: "12px" }}>Security</div>
           {[
             doc.is_encrypted && { label: "Encrypted at rest", value: "AES-256-GCM", ok: true },
-            doc.is_encrypted && { label: "Storage region", value: "Asia Pacific", ok: true },
+            doc.is_encrypted && { label: "Storage region", value: "Managed cloud", ok: true },
             doc.is_encrypted === false && { label: "Stored file", value: "Not stored", ok: false },
             doc.effective_sensitive && { label: "Access", value: "Re-auth required", ok: true },
             doc.sha256 && { label: "Integrity", value: "SHA-256 " + doc.sha256.slice(0, 12) + "\u2026", ok: true },

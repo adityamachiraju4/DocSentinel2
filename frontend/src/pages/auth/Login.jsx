@@ -18,17 +18,16 @@ const T = {
   font: { sans: "'Inter', sans-serif", mono: "'JetBrains Mono', monospace" },
 }
 
-const EXTRACT_FIELDS = [
-  { key: 'VENDOR', value: 'Clicktech Retail Pvt Ltd' },
-  { key: 'GSTIN', value: '29AABCT1332L1ZT' },
-  { key: 'INVOICE NO', value: 'INV-2026-00471' },
-  { key: 'HSN', value: '8471 · 9403' },
-  { key: 'TOTAL', value: '₹9,55,729.00' },
+const PROVISION_STEPS = [
+  { key: 'WORKSPACE', value: 'Provisioned' },
+  { key: 'ENCRYPTION', value: 'AES-256-GCM' },
+  { key: 'PLAN', value: 'Free · 25 docs/mo' },
+  { key: 'STATUS', value: 'Ready' },
 ]
 
 const REDUCE = typeof window !== 'undefined' && window.matchMedia('(prefers-reduced-motion: reduce)').matches
 
-function ExtractRow({ field, active, done, last }) {
+function ProvisionRow({ field, active, done, last }) {
   const [typed, setTyped] = useState('')
 
   useEffect(() => {
@@ -46,18 +45,21 @@ function ExtractRow({ field, active, done, last }) {
   }, [active, done, field.value])
 
   const filled = active || done
+  const isReady = field.key === 'STATUS'
   return (
     <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', padding: '10px 0', borderBottom: last ? 'none' : `1px solid ${T.border.hairline}` }}>
       <span style={{ fontFamily: T.font.mono, fontSize: 10, color: T.text.faint, letterSpacing: '0.1em' }}>{field.key}</span>
       <span style={{
         fontFamily: T.font.mono, fontSize: 12, fontWeight: 500,
-        color: filled ? T.text.primary : T.text.faint,
+        color: filled ? (isReady ? T.semantic.success : T.text.primary) : T.text.faint,
         background: filled ? 'transparent' : 'rgba(255,255,255,0.03)',
         borderRadius: 4, padding: filled ? 0 : '2px 8px', textAlign: 'right',
         minWidth: filled ? 0 : 90, transition: 'color 0.2s, background 0.2s',
+        display: 'inline-flex', alignItems: 'center', gap: 6, justifyContent: 'flex-end',
       }}>
         {filled ? (
           <>
+            {isReady && done && <span style={{ width: 5, height: 5, borderRadius: '50%', background: T.semantic.success, boxShadow: `0 0 6px ${T.semantic.success}` }} />}
             {typed}
             {active && typed.length < field.value.length && <span className="ds-caret">▋</span>}
           </>
@@ -67,23 +69,23 @@ function ExtractRow({ field, active, done, last }) {
   )
 }
 
-function ExtractionDemo() {
+function ProvisionDemo() {
   const [active, setActive] = useState(-1)
   const [doneTo, setDoneTo] = useState(-1)
-  const [scanning, setScanning] = useState(true)
+  const [running, setRunning] = useState(true)
 
   useEffect(() => {
-    if (REDUCE) { setDoneTo(EXTRACT_FIELDS.length - 1); setScanning(false); return }
+    if (REDUCE) { setDoneTo(PROVISION_STEPS.length - 1); setRunning(false); return }
     let idx = 0
     let timer
     const step = () => {
-      if (idx >= EXTRACT_FIELDS.length) {
-        setActive(-1); setScanning(false)
-        timer = setTimeout(() => { setDoneTo(-1); idx = 0; setScanning(true); step() }, 2000)
+      if (idx >= PROVISION_STEPS.length) {
+        setActive(-1); setRunning(false)
+        timer = setTimeout(() => { setDoneTo(-1); idx = 0; setRunning(true); step() }, 2200)
         return
       }
       setActive(idx)
-      const dwell = 38 * EXTRACT_FIELDS[idx].value.length + 520
+      const dwell = 38 * PROVISION_STEPS[idx].value.length + 520
       timer = setTimeout(() => {
         setDoneTo(idx); idx += 1; step()
       }, dwell)
@@ -98,17 +100,17 @@ function ExtractionDemo() {
         <span style={{ width: 9, height: 9, borderRadius: '50%', background: 'rgba(255,255,255,0.12)' }} />
         <span style={{ width: 9, height: 9, borderRadius: '50%', background: 'rgba(255,255,255,0.12)' }} />
         <span style={{ width: 9, height: 9, borderRadius: '50%', background: 'rgba(255,255,255,0.12)' }} />
-        <span style={{ marginLeft: 8, fontFamily: T.font.mono, fontSize: 10, color: T.text.faint, letterSpacing: '0.08em' }}>extracting · invoice.pdf</span>
+        <span style={{ marginLeft: 8, fontFamily: T.font.mono, fontSize: 10, color: T.text.faint, letterSpacing: '0.08em' }}>provisioning · new account</span>
         <span style={{ marginLeft: 'auto', display: 'flex', alignItems: 'center', gap: 6 }}>
-          <span style={{ width: 6, height: 6, borderRadius: '50%', background: scanning ? T.accent.bright : T.semantic.success, boxShadow: scanning ? `0 0 8px ${T.accent.bright}` : 'none' }} />
-          <span style={{ fontFamily: T.font.mono, fontSize: 10, color: scanning ? T.accent.bright : T.semantic.success }}>{scanning ? 'READING' : 'DONE'}</span>
+          <span style={{ width: 6, height: 6, borderRadius: '50%', background: running ? T.accent.bright : T.semantic.success, boxShadow: running ? `0 0 8px ${T.accent.bright}` : 'none' }} />
+          <span style={{ fontFamily: T.font.mono, fontSize: 10, color: running ? T.accent.bright : T.semantic.success }}>{running ? 'SETUP' : 'READY'}</span>
         </span>
       </div>
 
       <div style={{ position: 'relative', padding: '18px 16px', minHeight: 220 }}>
-        {scanning && <div className="ds-scan" style={{ position: 'absolute', left: 0, right: 0, height: 2, background: `linear-gradient(90deg, transparent, ${T.accent.violet}, transparent)`, boxShadow: `0 0 12px ${T.accent.violet}` }} />}
-        {EXTRACT_FIELDS.map((f, i) => (
-          <ExtractRow key={f.key} field={f} active={active === i} done={i <= doneTo} last={i === EXTRACT_FIELDS.length - 1} />
+        {running && <div className="ds-scan" style={{ position: 'absolute', left: 0, right: 0, height: 2, background: `linear-gradient(90deg, transparent, ${T.accent.violet}, transparent)`, boxShadow: `0 0 12px ${T.accent.violet}` }} />}
+        {PROVISION_STEPS.map((f, i) => (
+          <ProvisionRow key={f.key} field={f} active={active === i} done={i <= doneTo} last={i === PROVISION_STEPS.length - 1} />
         ))}
       </div>
     </div>
@@ -217,12 +219,12 @@ export default function Login() {
 
           <div style={{ position: 'relative', zIndex: 1 }}>
             <div className="ds-rise ds-rise-2">
-              <span style={{ fontFamily: T.font.mono, fontSize: '0.68rem', color: T.accent.bright, letterSpacing: '0.14em', textTransform: 'uppercase' }}>Live extraction</span>
+              <span style={{ fontFamily: T.font.mono, fontSize: '0.68rem', color: T.accent.bright, letterSpacing: '0.14em', textTransform: 'uppercase' }}>Secure access</span>
               <h2 style={{ fontFamily: T.font.sans, fontWeight: 600, fontSize: 'clamp(1.3rem, 2vw, 1.7rem)', color: T.text.primary, lineHeight: 1.25, letterSpacing: '-0.02em', margin: '10px 0 22px 0', maxWidth: 360 }}>
-                Paper goes in. Structured data comes out.
+                Your documents, locked down and ready.
               </h2>
             </div>
-            <div className="ds-rise ds-rise-3"><ExtractionDemo /></div>
+            <div className="ds-rise ds-rise-3"><ProvisionDemo /></div>
           </div>
 
           <p className="ds-rise ds-rise-4" style={{ fontFamily: T.font.mono, fontSize: '0.68rem', color: T.text.faint, letterSpacing: '0.05em', position: 'relative', zIndex: 1 }}>
