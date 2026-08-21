@@ -121,6 +121,7 @@ async def upload_document(
 
     doc = Document(
         user_id=current_user.id,
+        folder_id=folder_id,
         filename=storage_key,
         original_filename=file.filename,
         file_size=len(file_bytes),
