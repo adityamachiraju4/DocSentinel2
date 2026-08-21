@@ -34,6 +34,12 @@ class Folder(Base):
 
     # Nesting door left open (nullable); v1 enforces flat in the service layer.
     parent_folder_id = Column(Integer, ForeignKey("folders.id"), nullable=True)
+    # Vault discriminator (Phase 4b). "smart" (default) = server-searchable,
+    # AI extraction runs. "private" = zero-knowledge; uploads structurally
+    # bypass Groq and plaintext storage. Column-only here; the branch that
+    # enforces the bypass lives in the upload route + is proven by
+    # tests/test_private_no_extract.py.
+    vault_type = Column(String, nullable=False, server_default="smart")
 
     created_at = Column(DateTime(timezone=True), server_default=func.now())
     updated_at = Column(DateTime(timezone=True), onupdate=func.now())
