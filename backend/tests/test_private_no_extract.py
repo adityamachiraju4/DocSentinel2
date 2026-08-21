@@ -139,10 +139,13 @@ def main():
 
         print("Uploading a document into a PRIVATE (vault_type=private) folder:\n")
 
-        # 1. The upload must be accepted with folder targeting (route must
-        #    learn folder_id). Until then this is red.
-        check(resp.status_code in (200, 201),
-              f"upload into private folder accepted (got {resp.status_code})")
+        # 1. Under reject-until-crypto (design A), a PLAINTEXT upload into a
+        #    private folder must be REFUSED (501) — the encrypted client that
+        #    supplies ciphertext does not exist yet. The refusal happens before
+        #    any plaintext touches storage or Groq. When 4b crypto lands, this
+        #    becomes a 200/201 ciphertext accept and this assertion updates then.
+        check(resp.status_code == 501,
+              f"plaintext upload into private folder refused (got {resp.status_code})")
 
         # 2. Groq extraction entrypoint must NEVER run for a private upload.
         check(calls["extract"] == 0,

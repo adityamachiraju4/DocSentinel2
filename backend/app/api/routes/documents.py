@@ -29,7 +29,7 @@ def _verification_block(d):
 # PhRedSec™ | api/routes/documents.py
 # ─────────────────────────────────────────
 
-from fastapi import APIRouter, Depends, HTTPException, UploadFile, File, Response, Header, Request, Query
+from fastapi import APIRouter, Depends, HTTPException, UploadFile, File, Response, Header, Request, Query, Form
 from app.core.auth import verify_sensitive_grant
 from sqlalchemy.orm import Session
 
@@ -37,6 +37,7 @@ from app.core.database import get_db
 from app.core.auth import get_current_user
 from app.models.user import User
 from app.models.document import Document
+from app.models.folder import Folder
 from app.services.storage_service import save_file, get_file, delete_file
 from app.services.sensitive_detector import detect_sensitive
 from app.services.redaction_service import redact_pdf, RedactionError
@@ -71,6 +72,7 @@ MAX_FILE_SIZE = 10 * 1024 * 1024
 async def upload_document(
     request: Request,
     file: UploadFile = File(...),
+    folder_id: int | None = Form(None),
     db: Session = Depends(get_db),
     current_user: User = Depends(get_current_user),
 ):
@@ -88,6 +90,29 @@ async def upload_document(
             detail="File too large. Maximum size is 10MB."
         )
 
+    # Resolve target folder (owner-scoped) and enforce the vault mode.
+    # A PRIVATE folder is zero-knowledge: the server must never run AI
+    # extraction on, or persist plaintext of, its documents. The encrypted
+    # client that supplies ciphertext does not exist yet (4b crypto core),
+    # so a plaintext upload into a private folder is refused OUTRIGHT here,
+    # BEFORE save_file or classify_and_extract can touch the bytes. This is
+    # the structural bypass proven by tests/test_private_no_extract.py.
+    target_folder = None
+    if folder_id is not None:
+        target_folder = (
+            db.query(Folder)
+            .filter(Folder.id == folder_id, Folder.user_id == current_user.id)
+            .first()
+        )
+        # 404 not 403 — no existence disclosure (Phase 4a isolation rule).
+        if target_folder is None:
+            raise HTTPException(status_code=404, detail="Folder not found.")
+        if target_folder.vault_type == "private":
+            raise HTTPException(
+                status_code=501,
+                detail="Private vault uploads require the encrypted client (coming in Phase 4b). "
+                       "Plaintext uploads into a private folder are refused.",
+            )
     import hashlib
     sha256_hash = hashlib.sha256(file_bytes).hexdigest()
     storage_key = save_file(file_bytes, file.filename)
