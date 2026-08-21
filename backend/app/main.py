@@ -63,9 +63,11 @@ from app.api.routes import documents as documents_router
 from app.api.routes import collections as collections_router
 from app.api.routes import shares as shares_router
 from app.api.routes import shared as shared_router
+from app.api.routes import folders as folders_router
 
 app.include_router(auth_router.router, prefix="/api")
 app.include_router(documents_router.router, prefix="/api")
 app.include_router(collections_router.router, prefix="/api")
 app.include_router(shares_router.router, prefix="/api")
 app.include_router(shared_router.router, prefix="/api")
+app.include_router(folders_router.router, prefix="/api")

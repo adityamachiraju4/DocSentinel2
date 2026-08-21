@@ -60,6 +60,9 @@ class Document(Base):
     verified_fields_count = Column(Integer, nullable=False, default=0)
     # Trash / Recovery (Sprint D) — NULL = live, timestamp = trashed. Purge destroys row.
     deleted_at = Column(DateTime, nullable=True)
+    # Folder organization (Phase 4a) — NULL = unfiled / root. User-owned
+    # organization axis, orthogonal to the global collections taxonomy.
+    folder_id = Column(Integer, ForeignKey("folders.id"), nullable=True)
     total_verifiable_fields = Column(Integer, nullable=False, default=0)
 
     # Timestamps

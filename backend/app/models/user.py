@@ -30,4 +30,5 @@ class User(Base):
     totp_enabled = Column(Boolean, default=False, nullable=False)  # True only after first code verified
 
     documents = relationship("Document", back_populates="user")
+    folders = relationship("Folder", back_populates="user")
     subscription = relationship("Subscription", back_populates="user", uselist=False)
