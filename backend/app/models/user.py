@@ -28,6 +28,10 @@ class User(Base):
     # ── 2FA / TOTP ──
     totp_secret = Column(String, nullable=True)                    # base32 secret, set at enrollment start
     totp_enabled = Column(Boolean, default=False, nullable=False)  # True only after first code verified
+    # ── Private Vault (Phase 4b) ──
+    # Per-user Argon2id salt for vault key derivation. NULL until the
+    # user initializes a private vault. Salt only — never the key.
+    vault_kdf_salt = Column(String, nullable=True)
 
     documents = relationship("Document", back_populates="user")
     folders = relationship("Folder", back_populates="user")

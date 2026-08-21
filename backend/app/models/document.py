@@ -63,6 +63,10 @@ class Document(Base):
     # Folder organization (Phase 4a) — NULL = unfiled / root. User-owned
     # organization axis, orthogonal to the global collections taxonomy.
     folder_id = Column(Integer, ForeignKey("folders.id"), nullable=True)
+    # ── Private Vault (Phase 4b) ──
+    # Per-document Data Encryption Key, wrapped by the vault key.
+    # NULL for smart docs. Ciphertext only — server never sees the DEK.
+    wrapped_dek = Column(String, nullable=True)
     total_verifiable_fields = Column(Integer, nullable=False, default=0)
 
     # Timestamps
